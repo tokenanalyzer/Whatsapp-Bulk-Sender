@@ -14,6 +14,10 @@ const {
 } = require('../lib/phoneUtils');
 const OptOutService = require('../lib/optOutService');
 const { resolveBrowserExecutable } = require('../lib/browserResolver');
+const {
+    confirmMessageSend,
+    isMatchingOutgoingMessage,
+} = require('../lib/messageConfirmation');
 
 test('normalizePhoneNumber handles various formats correctly', () => {
     // Standard international
@@ -129,4 +133,144 @@ test('resolveBrowserExecutable locates an available Chromium browser', () => {
     const browser = resolveBrowserExecutable(path.join(__dirname, '..'));
     assert.ok(browser !== null, 'Browser should be resolvable');
     assert.ok(fs.existsSync(browser.path), `Browser path ${browser.path} must exist`);
+});
+
+test('confirmMessageSend resolves with confirmed message when sendMessage returns undefined (false-failure regression)', async () => {
+    const EventEmitter = require('events');
+    const mockClient = new EventEmitter();
+
+    const targetChatId = '919876543210@c.us';
+    const messageText = 'Hello Test Confirmation';
+    const sentAtSec = Math.floor(Date.now() / 1000);
+
+    const mockDeliveredMsg = {
+        id: { _serialized: 'true_919876543210@c.us_ABC123', remote: targetChatId },
+        fromMe: true,
+        to: targetChatId,
+        body: messageText,
+        timestamp: sentAtSec,
+    };
+
+    // sendMessage resolves to undefined (reproducing the pinned WhatsApp Web bug)
+    const sendMessageFn = async () => {
+        // While sending is in flight, WhatsApp fires message_create event
+        mockClient.emit('message_create', mockDeliveredMsg);
+        return undefined; // no Message object returned by sendMessage
+    };
+
+    const result = await confirmMessageSend({
+        waClient: mockClient,
+        chatId: targetChatId,
+        text: messageText,
+        media: null,
+        sentAtSec,
+        sendMessageFn,
+    });
+
+    assert.ok(result !== null);
+    assert.equal(result.id._serialized, 'true_919876543210@c.us_ABC123');
+    assert.equal(mockClient.listenerCount('message_create'), 0, 'Listener must be cleaned up');
+});
+
+test('confirmMessageSend resolves when sendMessage throws but fetchMessages verifies delivered message', async () => {
+    const EventEmitter = require('events');
+    const mockClient = new EventEmitter();
+
+    const targetChatId = '919876543210@c.us';
+    const messageText = 'Hello Fetch Fallback';
+    const sentAtSec = Math.floor(Date.now() / 1000);
+
+    const mockDeliveredMsg = {
+        id: { _serialized: 'true_919876543210@c.us_XYZ999', remote: targetChatId },
+        fromMe: true,
+        to: targetChatId,
+        body: messageText,
+        timestamp: sentAtSec,
+    };
+
+    const sendMessageFn = async () => {
+        throw new Error("Cannot read properties of undefined (reading 'id')");
+    };
+
+    const result = await confirmMessageSend({
+        waClient: mockClient,
+        chatId: targetChatId,
+        text: messageText,
+        media: null,
+        sentAtSec,
+        sendMessageFn,
+        verifyLastMessageFn: async () => null,
+        verifyFetchMessagesFn: async () => mockDeliveredMsg,
+        messageCreateTimeoutMs: 50,
+    });
+
+    assert.ok(result !== null);
+    assert.equal(result.id._serialized, 'true_919876543210@c.us_XYZ999');
+    assert.equal(mockClient.listenerCount('message_create'), 0, 'Listener must be cleaned up on error');
+});
+
+test('confirmMessageSend resolves when message_create arrives asynchronously after sendMessage finishes', async () => {
+    const EventEmitter = require('events');
+    const mockClient = new EventEmitter();
+
+    const targetChatId = '919876543210@c.us';
+    const messageText = 'Hello Async Confirmation';
+    const sentAtSec = Math.floor(Date.now() / 1000);
+
+    const mockDeliveredMsg = {
+        id: { _serialized: 'true_919876543210@c.us_ASYNC123', remote: { _serialized: targetChatId } },
+        fromMe: true,
+        to: targetChatId,
+        body: messageText,
+        timestamp: sentAtSec,
+    };
+
+    const sendMessageFn = async () => {
+        // Simulates Puppeteer IPC delay: event arrives 50ms AFTER sendMessage returns
+        setTimeout(() => {
+            mockClient.emit('message_create', mockDeliveredMsg);
+        }, 50);
+        return undefined;
+    };
+
+    const result = await confirmMessageSend({
+        waClient: mockClient,
+        chatId: targetChatId,
+        text: messageText,
+        media: null,
+        sentAtSec,
+        sendMessageFn,
+        messageCreateTimeoutMs: 500,
+    });
+
+    assert.ok(result !== null);
+    assert.equal(result.id._serialized, 'true_919876543210@c.us_ASYNC123');
+    assert.equal(mockClient.listenerCount('message_create'), 0, 'Listener must be cleaned up');
+});
+
+test('isMatchingOutgoingMessage handles object remote, newlines, and media matching', () => {
+    const { isMatchingOutgoingMessage } = require('../lib/messageConfirmation');
+    const sentAtSec = 1700000000;
+
+    // Object-based id.remote and to
+    const msg1 = {
+        id: { fromMe: true, remote: { _serialized: '919876543210@c.us' } },
+        fromMe: true,
+        to: '919876543210@c.us',
+        body: 'Hello World\r\nTest',
+        timestamp: sentAtSec + 1,
+    };
+    assert.ok(isMatchingOutgoingMessage(msg1, '919876543210@c.us', 'Hello World\nTest', null, sentAtSec));
+    assert.ok(!isMatchingOutgoingMessage(msg1, '919876543211@c.us', 'Hello World\nTest', null, sentAtSec));
+
+    // Media matching
+    const mediaMsg = {
+        id: { fromMe: true, remote: '919876543210@c.us' },
+        fromMe: true,
+        to: '919876543210@c.us',
+        body: 'Media Caption',
+        timestamp: sentAtSec + 1,
+    };
+    assert.ok(isMatchingOutgoingMessage(mediaMsg, '919876543210@c.us', 'Media Caption', {}, sentAtSec));
+    assert.ok(isMatchingOutgoingMessage(mediaMsg, '919876543210@c.us', null, {}, sentAtSec));
 });

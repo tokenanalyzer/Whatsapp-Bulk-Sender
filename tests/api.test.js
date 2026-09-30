@@ -8,11 +8,16 @@ const path = require('path');
 const fs = require('fs');
 
 // Set test environment
+const testDataDir = path.join(__dirname, '..', '.test_data');
+try {
+    fs.rmSync(testDataDir, { recursive: true, force: true });
+} catch (e) {}
+fs.mkdirSync(testDataDir, { recursive: true });
+
 process.env.BULKSENDER_DESKTOP = 'true';
-process.env.BULKSENDER_DATA_DIR = path.join(__dirname, '..', '.test_data');
-if (!fs.existsSync(process.env.BULKSENDER_DATA_DIR)) {
-    fs.mkdirSync(process.env.BULKSENDER_DATA_DIR, { recursive: true });
-}
+process.env.BULKSENDER_NO_AUTOCONNECT = 'true';
+process.env.NODE_ENV = 'test';
+process.env.BULKSENDER_DATA_DIR = testDataDir;
 
 const app = require('../server');
 
@@ -53,7 +58,15 @@ function makeRequest(method, pathUrl, body = null, headers = {}) {
 
 test('API Integration Suite', async (t) => {
     // Wait for server to bind
-    await new Promise(r => setTimeout(r, 1000));
+    if (app.server && !app.server.listening) {
+        await new Promise((resolve) => {
+            const timer = setTimeout(resolve, 500);
+            app.server.once('listening', () => {
+                clearTimeout(timer);
+                resolve();
+            });
+        });
+    }
 
     await t.test('GET / serves HTML with security headers', async () => {
         const res = await makeRequest('GET', '/');
@@ -182,6 +195,12 @@ test('API Integration Suite', async (t) => {
     });
 
     t.after(async () => {
+        if (typeof app.clearTimers === 'function') {
+            app.clearTimers();
+        }
+        if (typeof app.destroyWhatsAppClient === 'function') {
+            await app.destroyWhatsAppClient();
+        }
         if (app.server) {
             if (typeof app.server.closeAllConnections === 'function') {
                 app.server.closeAllConnections();

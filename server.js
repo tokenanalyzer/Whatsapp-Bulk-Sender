@@ -14,6 +14,12 @@ const { exec } = require('child_process');
 const { resolveBrowserExecutable } = require('./lib/browserResolver');
 const { parseContacts, processSpinSyntax, processTemplateVars } = require('./lib/phoneUtils');
 const OptOutService = require('./lib/optOutService');
+const {
+    isMatchingOutgoingMessage,
+    verifyMessageDelivered,
+    verifyViaFetchMessages,
+    confirmMessageSend,
+} = require('./lib/messageConfirmation');
 
 const app = express();
 const APP_ROOT = __dirname;
@@ -114,6 +120,7 @@ const MAX_RECONNECT_ATTEMPTS = 5;
 let isInitializing = false;
 let intentionalDisconnect = false;
 let reconnectTimer = null;
+let autoConnectTimer = null;
 
 let messageLogs = [];
 let sendingStatus = {
@@ -158,6 +165,10 @@ function scheduleHistorySave() {
 
 // ─── WhatsApp Client Management ───
 async function destroyWhatsAppClient() {
+    if (autoConnectTimer) {
+        clearTimeout(autoConnectTimer);
+        autoConnectTimer = null;
+    }
     if (reconnectTimer) {
         clearTimeout(reconnectTimer);
         reconnectTimer = null;
@@ -171,6 +182,7 @@ async function destroyWhatsAppClient() {
         }
         waClient = null;
     }
+    isInitializing = false;
     waReady = false;
     qrCodeData = null;
 }
@@ -428,49 +440,30 @@ async function canSendToRecipient(chatId) {
     }
 }
 
-async function verifyMessageDelivered(chatId, text, media, sentAtSec) {
-    for (let i = 0; i < 4; i++) {
-        await interruptibleSleep(1000);
-        try {
-            const chat = await waClient.getChatById(chatId);
-            const last = chat && chat.lastMessage;
-            if (!last || !last.fromMe) continue;
-            if (typeof last.timestamp === 'number' && last.timestamp < sentAtSec - 30) continue;
-            if (text) {
-                const sentBody = String(text).replace(/\r/g, '').trim();
-                const gotBody = String(last.body || '').replace(/\r/g, '').trim();
-                if (gotBody !== sentBody) continue;
-            }
-            return last;
-        } catch (e) {}
-    }
-    return null;
-}
-
 async function sendWhatsAppMessage(chatId, text, media) {
     if (!waClient || !waReady) {
         throw new Error('WhatsApp connection lost. Please reconnect.');
     }
 
-    const sentAtSec = Date.now() / 1000;
-    let sent;
+    const sentAtSec = Math.floor(Date.now() / 1000);
+    const sendOptions = media
+        ? { caption: text, waitUntilMsgSent: true }
+        : { waitUntilMsgSent: true };
 
-    try {
-        sent = media
-            ? await waClient.sendMessage(chatId, media, { caption: text })
-            : await waClient.sendMessage(chatId, text);
-    } catch (err) {
-        const verified = await verifyMessageDelivered(chatId, text, media, sentAtSec);
-        if (verified) return verified;
-        throw err;
-    }
+    const sendMessageFn = () => media
+        ? waClient.sendMessage(chatId, media, sendOptions)
+        : waClient.sendMessage(chatId, text, sendOptions);
 
-    if (sent && sent.id) return sent;
-
-    const verified = await verifyMessageDelivered(chatId, text, media, sentAtSec);
-    if (verified) return verified;
-
-    throw new Error('WhatsApp returned no message confirmation (chat not ready)');
+    return confirmMessageSend({
+        waClient,
+        chatId,
+        text,
+        media,
+        sentAtSec,
+        sendMessageFn,
+        verifyLastMessageFn: (c, t, m, s) => verifyMessageDelivered(waClient, c, t, m, s, interruptibleSleep),
+        verifyFetchMessagesFn: (c, t, m, s) => verifyViaFetchMessages(waClient, c, t, m, s, interruptibleSleep),
+    });
 }
 
 async function sendBulkMessages(contacts, messageTemplate, mediaPath, options) {
@@ -596,7 +589,16 @@ app.post('/api/connect', async (req, res) => {
     res.json({ success: true, message: 'Initializing WhatsApp...', state: 'connecting', ready: false });
 });
 
-app.get('/api/qr', (req, res) => {
+app.get('/api/qr', async (req, res) => {
+    if (waClient && !waReady && waState === 'authenticated') {
+        try {
+            const state = await waClient.getState();
+            if (state === 'CONNECTED') {
+                waReady = true;
+                waState = 'connected';
+            }
+        } catch (e) {}
+    }
     res.json({
         qr: qrCodeData,
         state: waState,
@@ -776,7 +778,16 @@ app.post('/api/send', async (req, res) => {
     });
 });
 
-app.get('/api/status', (req, res) => {
+app.get('/api/status', async (req, res) => {
+    if (waClient && !waReady && waState === 'authenticated') {
+        try {
+            const state = await waClient.getState();
+            if (state === 'CONNECTED') {
+                waReady = true;
+                waState = 'connected';
+            }
+        } catch (e) {}
+    }
     res.json({
         ...sendingStatus,
         logs: messageLogs,
@@ -968,9 +979,9 @@ const httpServer = app.listen(PORT, () => {
     }
 
     // Auto-connect if previous authenticated session exists
-    if (fs.existsSync(SESSION_DIR) && fs.readdirSync(SESSION_DIR).length > 0) {
+    if (process.env.BULKSENDER_NO_AUTOCONNECT !== 'true' && process.env.NODE_ENV !== 'test' && fs.existsSync(SESSION_DIR) && fs.readdirSync(SESSION_DIR).length > 0) {
         console.log('[*] Existing session found, auto-connecting...');
-        setTimeout(() => {
+        autoConnectTimer = setTimeout(() => {
             initWhatsApp().catch(e => console.error('[*] Auto-connect failed:', e.message));
         }, 1000);
     }
@@ -998,5 +1009,23 @@ process.on('SIGTERM', async () => {
     saveHistory();
     process.exit(0);
 });
+
+app.confirmMessageSend = confirmMessageSend;
+app.isMatchingOutgoingMessage = isMatchingOutgoingMessage;
+app.destroyWhatsAppClient = destroyWhatsAppClient;
+app.clearTimers = () => {
+    if (autoConnectTimer) {
+        clearTimeout(autoConnectTimer);
+        autoConnectTimer = null;
+    }
+    if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+    }
+    if (historySaveTimer) {
+        clearTimeout(historySaveTimer);
+        historySaveTimer = null;
+    }
+};
 
 module.exports = app;
