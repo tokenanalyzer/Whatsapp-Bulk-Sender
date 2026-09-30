@@ -22,15 +22,16 @@
         </div>
         <ul class="sidebar-nav">
             <li><a href="#" class="active" data-page="dashboard"><i class="fas fa-home"></i> Dashboard</a></li>
-            <li><a href="#" data-page="connect"><i class="fas fa-qrcode"></i> Connect</a></li>
+            <li><a href="#" data-page="connect"><i class="fas fa-qrcode"></i> Connect <span class="badge rounded-pill ms-auto" id="navConnectBadge" style="font-size:0.65rem; background:#6b7280;">Offline</span></a></li>
             <li><a href="#" data-page="send"><i class="fas fa-paper-plane"></i> Send Messages</a></li>
             <li><a href="#" data-page="history"><i class="fas fa-clock-rotate-left"></i> History</a></li>
+            <li><a href="#" data-page="optouts"><i class="fas fa-user-slash"></i> Opt-Outs (STOP)</a></li>
             <li><a href="#" data-page="settings"><i class="fas fa-gear"></i> Settings</a></li>
         </ul>
         <div style="padding:16px 8px; border-top:1px solid #2d3139; margin-top:auto;">
             <div id="sidebarStatus" style="margin-bottom:12px;">
-                <small style="color:#6b7280; font-size:.75rem;">
-                    <i class="fas fa-circle" style="color:var(--danger); font-size:6px;"></i> Disconnected
+                <small style="color:#9ca3af; font-size:.75rem;">
+                    <i class="fas fa-circle" style="color:var(--text-secondary); font-size:6px;"></i> Disconnected
                 </small>
             </div>
             <button onclick="quitApp()" style="background:transparent;border:1px solid #2d3139;color:#9ca3af;padding:8px 12px;border-radius:8px;font-size:.8rem;cursor:pointer;width:100%;display:flex;align-items:center;justify-content:center;gap:6px;transition:all .2s;" onmouseover="this.style.borderColor='#ef4444';this.style.color='#ef4444'" onmouseout="this.style.borderColor='#2d3139';this.style.color='#9ca3af'">
@@ -38,6 +39,7 @@
             </button>
         </div>
     </aside>
+
     <main class="main-content">
         <!-- ═══ DASHBOARD PAGE ═══ -->
         <section class="page-section active" id="page-dashboard">
@@ -49,7 +51,7 @@
             <div class="row g-3 mb-4">
                 <div class="col-sm-6 col-lg-3"><div class="stat-card stat-clickable" data-filter="sent" onclick="setDashFilter('sent')"><div class="icon-box" style="background:#dcfce7;color:#166534;"><i class="fas fa-check-circle"></i></div><div class="value" id="dashSent">0</div><div class="label">Messages Sent</div></div></div>
                 <div class="col-sm-6 col-lg-3"><div class="stat-card stat-clickable" data-filter="failed" onclick="setDashFilter('failed')"><div class="icon-box" style="background:#fee2e2;color:#991b1b;"><i class="fas fa-times-circle"></i></div><div class="value" id="dashFailed">0</div><div class="label">Failed</div></div></div>
-                <div class="col-sm-6 col-lg-3"><div class="stat-card stat-clickable" data-filter="all" onclick="setDashFilter('all')"><div class="icon-box" style="background:#e0f2fe;color:#075985;"><i class="fas fa-users"></i></div><div class="value" id="dashTotal">0</div><div class="label">Total Contacts</div></div></div>
+                <div class="col-sm-6 col-lg-3"><div class="stat-card stat-clickable" data-filter="all" onclick="setDashFilter('all')"><div class="icon-box" style="background:#e0f2fe;color:#075985;"><i class="fas fa-users"></i></div><div class="value" id="dashTotal">0</div><div class="label">Total History</div></div></div>
                 <div class="col-sm-6 col-lg-3"><div class="stat-card"><div class="icon-box" style="background:#fef3c7;color:#92400e;"><i class="fas fa-bolt"></i></div><div class="value" id="dashRate">0%</div><div class="label">Success Rate</div></div></div>
             </div>
 
@@ -80,137 +82,238 @@
                 </div>
             </div>
         </section>
-        <!-- ═══ CONNECT PAGE ═══ -->
+
+        <!-- ═══ CONNECT PAGE (8 STATES) ═══ -->
         <section class="page-section" id="page-connect">
-            <div class="page-header">
-                <h1>Connect WhatsApp</h1>
-                <p>Scan the QR code with your WhatsApp mobile app</p>
+            <div class="page-header d-flex justify-content-between align-items-center">
+                <div>
+                    <h1>WhatsApp Connection</h1>
+                    <p>Manage session authentication and QR code link</p>
+                </div>
+                <div>
+                    <span id="connectionBadgeHeader" class="state-badge disconnected"><i class="fas fa-circle"></i> Disconnected</span>
+                </div>
             </div>
 
             <div class="row g-4">
                 <div class="col-lg-7">
                     <div class="card-panel">
                         <div class="card-panel-body text-center" style="padding:40px;">
-                            <div id="connectIdle">
-                                <i class="fab fa-whatsapp" style="font-size:4rem;color:var(--accent);margin-bottom:16px;"></i>
-                                <h3 style="font-weight:700;">Ready to Connect?</h3>
-                                <p style="color:var(--text-secondary);">Click below to generate a QR code, then scan it with your WhatsApp mobile app.</p>
+                            <!-- STATE 1: Disconnected -->
+                            <div id="stateDisconnected">
+                                <i class="fab fa-whatsapp" style="font-size:4rem;color:var(--text-secondary);margin-bottom:16px;"></i>
+                                <h3 style="font-weight:700;">WhatsApp Disconnected</h3>
+                                <p style="color:var(--text-secondary);">Click below to launch the WhatsApp engine and generate a pairing QR code.</p>
                                 <button class="btn-primary-custom" onclick="connectWA()" id="connectBtn">
                                     <i class="fab fa-whatsapp"></i> Generate QR Code
                                 </button>
                             </div>
 
-                            <div id="connectAuth" style="display:none;">
+                            <!-- STATE 2: Connecting -->
+                            <div id="stateConnecting" style="display:none;">
                                 <div class="loader-spinner" style="margin:0 auto 20px;"></div>
-                                <h3 style="font-weight:700;">Loading WhatsApp...</h3>
-                                <p style="color:var(--text-secondary);" id="connectAuthStep">Starting browser engine...</p>
-                                <div class="progress-custom" style="margin:16px auto;max-width:400px;"><div class="bar" id="loadProgress" style="width:0%"></div></div>
-                                <small style="color:var(--text-secondary);">First time takes 20-30 seconds. After this, it's much faster.</small>
+                                <h3 style="font-weight:700;">Starting Browser & WhatsApp...</h3>
+                                <p style="color:var(--text-secondary);" id="connectingStepText">Launching browser engine and loading WhatsApp Web...</p>
+                                <small style="color:var(--text-secondary);">Initializing local session cache. Please wait a moment.</small>
                             </div>
 
-                            <div id="connectQR" style="display:none;">
+                            <!-- STATE 3: Waiting for QR -->
+                            <div id="stateWaitingQR" style="display:none;">
+                                <div class="loader-spinner" style="margin:0 auto 20px;"></div>
+                                <h3 style="font-weight:700;">Waiting for QR Code...</h3>
+                                <p style="color:var(--text-secondary);">WhatsApp Web loaded. Generating cryptographic pairing code...</p>
+                            </div>
+
+                            <!-- STATE 4: QR Available -->
+                            <div id="stateQRAvailable" style="display:none;">
                                 <h3 style="font-weight:700;margin-bottom:16px;">Scan this QR Code</h3>
-                                <div style="background:#fff;padding:16px;border-radius:12px;display:inline-block;border:2px solid var(--accent);">
+                                <div style="background:#fff;padding:16px;border-radius:12px;display:inline-block;border:2px solid var(--accent);box-shadow:0 4px 16px rgba(0,0,0,.08);">
                                     <img id="qrImage" src="" alt="QR Code" style="width:280px;height:280px;display:block;">
                                 </div>
-                                <p style="color:var(--text-secondary);margin-top:16px;">Open WhatsApp on your phone → Settings → Linked Devices → Link a Device</p>
-                                <small style="color:var(--text-secondary);">QR refreshes automatically every 20 seconds</small>
+                                <p style="color:var(--text-secondary);margin-top:16px;">Open WhatsApp on phone → Settings / Menu (⋮) → Linked Devices → Link a Device</p>
+                                <small style="color:var(--text-secondary);"><i class="fas fa-arrows-rotate"></i> Code refreshes automatically if not scanned</small>
                             </div>
 
-                            <div id="connectReady" style="display:none;">
-                                <i class="fas fa-check-circle" style="font-size:4rem;color:var(--accent);margin-bottom:16px;"></i>
-                                <h3 style="font-weight:700;color:var(--accent);">Connected!</h3>
-                                <p style="color:var(--text-secondary);">WhatsApp is ready. Go to Send Messages to start sending.</p>
-                                <button class="btn-primary-custom" onclick="navigateTo('send')"><i class="fas fa-paper-plane"></i> Send Messages</button>
-                                <button class="btn-danger-custom" onclick="disconnectWA()" style="margin-left:8px;"><i class="fas fa-power-off"></i> Disconnect</button>
+                            <!-- STATE 5: Authenticated -->
+                            <div id="stateAuthenticated" style="display:none;">
+                                <div class="loader-spinner" style="margin:0 auto 20px;"></div>
+                                <h3 style="font-weight:700;color:var(--accent);">QR Scanned! Authenticating...</h3>
+                                <p style="color:var(--text-secondary);">Syncing WhatsApp session and chat keys. Preparing messenger engine...</p>
                             </div>
+
+                            <!-- STATE 6: Connected -->
+                            <div id="stateConnected" style="display:none;">
+                                <i class="fas fa-check-circle" style="font-size:4rem;color:var(--accent);margin-bottom:16px;"></i>
+                                <h3 style="font-weight:700;color:var(--accent);">WhatsApp Connected & Ready</h3>
+                                <p style="color:var(--text-secondary);">Session is active and ready to deliver bulk campaigns.</p>
+                                <div class="mt-3">
+                                    <button class="btn-primary-custom" onclick="navigateTo('send')"><i class="fas fa-paper-plane"></i> Go to Send Messages</button>
+                                    <button class="btn-danger-custom" onclick="disconnectWA()" style="margin-left:8px;"><i class="fas fa-power-off"></i> Disconnect</button>
+                                </div>
+                            </div>
+
+                            <!-- STATE 7: Reconnecting -->
+                            <div id="stateReconnecting" style="display:none;">
+                                <div class="loader-spinner" style="margin:0 auto 20px; border-top-color:var(--warning);"></div>
+                                <h3 style="font-weight:700;color:var(--warning);">Reconnecting to WhatsApp...</h3>
+                                <p style="color:var(--text-secondary);" id="reconnectStatusText">Attempting automatic reconnection...</p>
+                                <button class="btn-danger-custom" onclick="disconnectWA()"><i class="fas fa-stop"></i> Cancel Reconnect</button>
+                            </div>
+
+                            <!-- STATE 8: Auth Failure / Session Error -->
+                            <div id="stateAuthFailure" style="display:none;">
+                                <i class="fas fa-triangle-exclamation" style="font-size:4rem;color:var(--danger);margin-bottom:16px;"></i>
+                                <h3 style="font-weight:700;color:var(--danger);">Authentication / Session Error</h3>
+                                <div class="alert alert-danger mx-auto mt-3" style="max-width:480px;text-align:left;font-size:0.85rem;" id="authErrorMessage">
+                                    Session error occurred.
+                                </div>
+                                <div class="mt-3">
+                                    <button class="btn-primary-custom" onclick="connectWA()"><i class="fas fa-rotate"></i> Scan New QR Code</button>
+                                    <button class="btn-outline-custom" onclick="disconnectWA()" style="margin-left:8px;">Reset Session</button>
+                                </div>
+                            </div>
+
                         </div>
                     </div>
                 </div>
 
                 <div class="col-lg-5">
                     <div class="card-panel">
-                        <div class="card-panel-header"><h3><i class="fas fa-info-circle" style="color:var(--accent);margin-right:8px;"></i> How to Connect</h3></div>
+                        <div class="card-panel-header"><h3><i class="fas fa-info-circle" style="color:var(--accent);margin-right:8px;"></i> Connection Instructions</h3></div>
                         <div class="card-panel-body">
                             <ol style="padding-left:20px;color:var(--text-secondary);font-size:.9rem;line-height:1.8;">
-                                <li>Click <strong>Generate QR Code</strong></li>
-                                <li>Open <strong>WhatsApp</strong> on your phone</li>
-                                <li>Tap <strong>Menu (⋮)</strong> → <strong>Linked Devices</strong></li>
-                                <li>Tap <strong>Link a Device</strong></li>
-                                <li>Scan the QR code shown here</li>
-                                <li>Wait for "Connected!" message</li>
+                                <li>Click <strong>Generate QR Code</strong>.</li>
+                                <li>Open <strong>WhatsApp</strong> on your mobile device.</li>
+                                <li>Tap <strong>Settings / Menu (⋮)</strong> → <strong>Linked Devices</strong>.</li>
+                                <li>Tap <strong>Link a Device</strong> and point your camera at the QR code.</li>
+                                <li>Status will update to <strong>Connected</strong> once confirmed.</li>
                             </ol>
                             <hr>
                             <small style="color:var(--text-secondary);">
                                 <i class="fas fa-shield-alt" style="color:var(--accent);"></i>
-                                Your session is saved locally. You only need to scan once.
+                                <strong>Local Persistence:</strong> Your session credentials are stored locally on your machine. You will remain logged in across app restarts.
                             </small>
                         </div>
                     </div>
                 </div>
             </div>
         </section>
+
         <!-- ═══ SEND PAGE ═══ -->
         <section class="page-section" id="page-send">
-            <div class="page-header"><h1>Send Messages</h1><p>Compose and send bulk WhatsApp messages</p></div>
+            <div class="page-header"><h1>Send Messages</h1><p>Compose and send bulk WhatsApp campaigns with personalization and media</p></div>
 
-            <div class="card-panel" id="sendWarning" style="border-left:4px solid var(--warning);">
+            <div class="card-panel" id="sendWarning" style="border-left:4px solid var(--warning); display:none;">
                 <div class="card-panel-body" style="display:flex;align-items:center;gap:12px;">
                     <i class="fas fa-exclamation-triangle" style="color:var(--warning);font-size:1.3rem;"></i>
-                    <div><strong>WhatsApp not connected</strong><br><small class="text-muted">Connect WhatsApp first to send messages.</small></div>
+                    <div><strong>WhatsApp is not connected</strong><br><small class="text-muted">Please link WhatsApp first to launch campaigns.</small></div>
                     <button class="btn-primary-custom" style="margin-left:auto;padding:8px 16px;font-size:.85rem;" onclick="navigateTo('connect')">Connect Now</button>
                 </div>
             </div>
 
             <form id="sendForm" enctype="multipart/form-data">
                 <div class="row g-4">
+                    <!-- Recipients Column -->
                     <div class="col-lg-6">
                         <div class="card-panel">
-                            <div class="card-panel-header"><h3><i class="fas fa-address-book" style="color:var(--accent);margin-right:8px;"></i> Phone Numbers</h3></div>
+                            <div class="card-panel-header">
+                                <h3><i class="fas fa-address-book" style="color:var(--accent);margin-right:8px;"></i> 1. Recipients</h3>
+                                <button type="button" class="btn-outline-custom" style="padding:4px 12px;font-size:0.75rem;" onclick="previewContacts()"><i class="fas fa-eye"></i> Validate & Preview</button>
+                            </div>
                             <div class="card-panel-body">
-                                <ul class="nav nav-tabs-custom nav-tabs"><li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#numText" type="button">Type</button></li><li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#numFile" type="button">Upload</button></li></ul>
+                                <div class="mb-3">
+                                    <label class="form-label">Default Country Code (Optional)</label>
+                                    <input type="text" class="form-control" name="default_country_code" id="defaultCountryCode" placeholder="e.g. 91 for India, 1 for US/Canada, 44 for UK" style="max-width:240px;font-size:0.85rem;">
+                                    <small class="text-muted">Used automatically if numbers in list lack an international prefix</small>
+                                </div>
+
+                                <ul class="nav nav-tabs-custom nav-tabs">
+                                    <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#numText" type="button">Type Numbers</button></li>
+                                    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#numFile" type="button">Upload File (.csv, .xlsx, .txt)</button></li>
+                                </ul>
                                 <div class="tab-content">
-                                    <div class="tab-pane fade show active" id="numText"><textarea class="form-control" name="numbers_text" id="numbersText" placeholder="+919876543210&#10;+918765432109"></textarea><small class="text-muted mt-1 d-block">Include country code</small></div>
+                                    <div class="tab-pane fade show active" id="numText">
+                                        <textarea class="form-control" name="numbers_text" id="numbersText" placeholder="+919876543210&#10;+918765432109&#10;9876543210, John Doe"></textarea>
+                                        <small class="text-muted mt-1 d-block">One per line. Formats: <code>+919876543210</code> or <code>+919876543210, Name</code></small>
+                                    </div>
                                     <div class="tab-pane fade" id="numFile">
                                         <div class="upload-zone" id="numUploadZone" onclick="document.getElementById('numbersFile').click()">
-                                            <i class="fas fa-cloud-upload-alt d-block"></i><span id="numFileName">Drop or click to upload</span><br><small class="text-muted">.txt, .csv, .xlsx</small>
+                                            <i class="fas fa-cloud-upload-alt d-block"></i><span id="numFileName">Drop or click to upload CSV/Excel</span><br>
+                                            <small class="text-muted">.xlsx, .csv, or .txt with Phone, Name, and custom columns</small>
                                         </div>
                                         <input type="file" id="numbersFile" name="numbers_file" accept=".txt,.csv,.xlsx,.xls" hidden>
                                     </div>
                                 </div>
+
+                                <!-- Contact Validation Card -->
+                                <div id="contactPreviewSummary" class="contact-summary-card" style="display:none;">
+                                    <div class="d-flex justify-content-between align-items-center mb-2">
+                                        <strong style="font-size:0.85rem;"><i class="fas fa-list-check" style="color:var(--accent);"></i> Contact Summary</strong>
+                                        <button type="button" class="btn-close" style="font-size:0.7rem;" onclick="document.getElementById('contactPreviewSummary').style.display='none'"></button>
+                                    </div>
+                                    <div class="d-flex gap-2 flex-wrap mb-2">
+                                        <span class="contact-pill valid" id="cpValid">0 Valid</span>
+                                        <span class="contact-pill duplicate" id="cpDup">0 Duplicates</span>
+                                        <span class="contact-pill invalid" id="cpInvalid">0 Invalid</span>
+                                        <span class="contact-pill suppressed" id="cpSuppressed">0 Opted Out</span>
+                                    </div>
+                                    <div id="contactPreviewList" style="font-size:0.8rem;max-height:120px;overflow-y:auto;color:var(--text-secondary);"></div>
+                                </div>
                             </div>
                         </div>
                     </div>
+
+                    <!-- Message Composer Column -->
                     <div class="col-lg-6">
                         <div class="card-panel">
-                            <div class="card-panel-header"><h3><i class="fas fa-message" style="color:var(--accent);margin-right:8px;"></i> Message</h3></div>
+                            <div class="card-panel-header">
+                                <h3><i class="fas fa-message" style="color:var(--accent);margin-right:8px;"></i> 2. Message Template</h3>
+                            </div>
                             <div class="card-panel-body">
-                                <ul class="nav nav-tabs-custom nav-tabs"><li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#msgText" type="button">Type</button></li><li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#msgFile" type="button">Upload</button></li></ul>
+                                <ul class="nav nav-tabs-custom nav-tabs">
+                                    <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#msgText" type="button">Type Message</button></li>
+                                    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#msgFile" type="button">Upload Template (.txt)</button></li>
+                                </ul>
                                 <div class="tab-content">
                                     <div class="tab-pane fade show active" id="msgText">
-                                        <textarea class="form-control" name="message_text" id="messageText" placeholder="Hello {Hi|Hey} there!&#10;&#10;Spin syntax: {option1|option2}&#10;Each recipient gets a random variant."></textarea>
-                                        <div class="d-flex justify-content-between mt-1"><small class="text-muted"><i class="fas fa-magic" style="color:var(--accent);"></i> Spin syntax supported</small><small class="text-muted"><span id="charCount">0</span> chars</small></div>
+                                        <textarea class="form-control" name="message_text" id="messageText" placeholder="Hello {{Name}}! {Thanks for connecting|Great to meet you}.&#10;&#10;Reply STOP to unsubscribe."></textarea>
+                                        <div class="d-flex justify-content-between mt-1">
+                                            <small class="text-muted"><i class="fas fa-magic" style="color:var(--accent);"></i> Spin syntax: <code>{A|B}</code> | Variables: <code>{{Name}}</code></small>
+                                            <small class="text-muted"><span id="charCount">0</span> chars</small>
+                                        </div>
                                     </div>
                                     <div class="tab-pane fade" id="msgFile">
                                         <div class="upload-zone" id="msgUploadZone" onclick="document.getElementById('messageFile').click()">
-                                            <i class="fas fa-cloud-upload-alt d-block"></i><span id="msgFileName">Click to upload .txt</span>
+                                            <i class="fas fa-cloud-upload-alt d-block"></i><span id="msgFileName">Click to upload .txt message template</span>
                                         </div>
                                         <input type="file" id="messageFile" name="message_file" accept=".txt" hidden>
+                                    </div>
+                                </div>
+
+                                <!-- Live Chat Preview Bubble -->
+                                <div class="mt-3">
+                                    <label class="form-label"><i class="fas fa-mobile-screen"></i> Live Recipient Preview</label>
+                                    <div class="chat-preview-box">
+                                        <div class="chat-bubble" id="liveMsgPreview">
+                                            Hello! Type your message above to see preview...
+                                            <span class="chat-time" id="livePreviewTime">12:00 PM</span>
+                                        </div>
                                     </div>
                                 </div>
                             </div>
                         </div>
                     </div>
                 </div>
-                <!-- Media -->
+
+                <!-- Media Attachment -->
                 <div class="card-panel mt-4">
-                    <div class="card-panel-header"><h3><i class="fas fa-photo-film" style="color:var(--accent);margin-right:8px;"></i> Media Attachment <small style="font-weight:400;color:var(--text-secondary);">(Optional)</small></h3></div>
+                    <div class="card-panel-header"><h3><i class="fas fa-photo-film" style="color:var(--accent);margin-right:8px;"></i> 3. Media Attachment <small style="font-weight:400;color:var(--text-secondary);">(Optional)</small></h3></div>
                     <div class="card-panel-body">
                         <div class="row align-items-center">
                             <div class="col-md-8">
                                 <div class="upload-zone" id="mediaUploadZone" onclick="document.getElementById('mediaFile').click()">
                                     <i class="fas fa-image d-block"></i><span id="mediaFileName">Click to upload Image, Video, or Document</span><br>
-                                    <small class="text-muted">Images, videos, PDFs, documents — any file type</small>
+                                    <small class="text-muted">Images (PNG/JPEG), Videos (MP4), PDFs, Spreadsheets (Max 50MB)</small>
                                 </div>
                                 <input type="file" id="mediaFile" name="media_file" hidden>
                             </div>
@@ -229,27 +332,29 @@
                     </div>
                 </div>
 
-                <!-- Anti-Ban Settings -->
+                <!-- Delivery Controls / Rate Limiting -->
                 <div class="card-panel mt-4">
-                    <div class="card-panel-header"><h3><i class="fas fa-shield-halved" style="color:var(--accent);margin-right:8px;"></i> Anti-Ban Settings</h3></div>
+                    <div class="card-panel-header"><h3><i class="fas fa-shield-halved" style="color:var(--accent);margin-right:8px;"></i> 4. Delivery Rate & Safe Delay Controls</h3></div>
                     <div class="card-panel-body">
                         <div class="row g-3">
                             <div class="col-md-3"><label class="form-label">Min Delay (sec)</label><input type="number" class="form-control" name="delay_min" value="5" min="2" max="60"></div>
                             <div class="col-md-3"><label class="form-label">Max Delay (sec)</label><input type="number" class="form-control" name="delay_max" value="12" min="3" max="120"></div>
-                            <div class="col-md-3"><label class="form-label">Batch Size</label><input type="number" class="form-control" name="batch_size" value="0" min="0" max="500" placeholder="0 = no batching"></div>
+                            <div class="col-md-3"><label class="form-label">Batch Size (0 = continuous)</label><input type="number" class="form-control" name="batch_size" value="0" min="0" max="500" placeholder="0 = no batching"></div>
                             <div class="col-md-3"><label class="form-label">Batch Cooldown (sec)</label><input type="number" class="form-control" name="batch_cooldown" value="60" min="10" max="600"></div>
                         </div>
-                        <small class="text-muted mt-2 d-block"><i class="fas fa-info-circle"></i> Random delays between messages help avoid WhatsApp ban. Batching adds longer pauses every N messages.</small>
+                        <small class="text-muted mt-2 d-block"><i class="fas fa-info-circle"></i> Spreading messages across random intervals maintains controlled traffic. Cancel interrupts cooldowns immediately.</small>
                     </div>
                 </div>
 
+                <!-- Action Buttons -->
                 <div class="card-panel mt-4">
                     <div class="card-panel-body text-end">
-                        <button type="submit" class="btn-primary-custom" id="sendBtn"><i class="fab fa-whatsapp"></i> Start Sending</button>
-                        <button type="button" class="btn-danger-custom" id="cancelBtn" onclick="cancelSending()" style="display:none;margin-left:8px;"><i class="fas fa-stop"></i> Cancel</button>
+                        <button type="submit" class="btn-primary-custom" id="sendBtn"><i class="fab fa-whatsapp"></i> Start Campaign</button>
+                        <button type="button" class="btn-danger-custom" id="cancelBtn" onclick="cancelSending()" style="display:none;margin-left:8px;"><i class="fas fa-stop"></i> Cancel Campaign</button>
                     </div>
                 </div>
             </form>
+
             <!-- Send Progress -->
             <div class="card-panel mt-4" id="sendProgress" style="display:none;">
                 <div class="card-panel-header"><h3>Sending Progress</h3><span id="sendProgressCount" class="badge-status badge-sending">0/0</span></div>
@@ -265,8 +370,9 @@
                 </div>
             </div>
 
+            <!-- Live Logs Table -->
             <div class="card-panel mt-4" id="sendLogs" style="display:none;">
-                <div class="card-panel-header"><h3>Message Log</h3><button type="button" class="btn-outline-custom" onclick="clearCurrentLogs()"><i class="fas fa-trash"></i> Clear</button></div>
+                <div class="card-panel-header"><h3>Campaign Live Activity</h3><button type="button" class="btn-outline-custom" onclick="clearCurrentLogs()"><i class="fas fa-trash"></i> Clear</button></div>
                 <div class="card-panel-body p-0">
                     <div class="log-table-wrap">
                         <table class="table table-hover mb-0"><thead><tr><th>#</th><th>Number</th><th>Message</th><th>Status</th><th>Delivery</th><th>Time</th></tr></thead><tbody id="sendLogsBody"></tbody></table>
@@ -275,10 +381,52 @@
             </div>
         </section>
 
+        <!-- ═══ OPT-OUTS (STOP/UNSUBSCRIBE) PAGE ═══ -->
+        <section class="page-section" id="page-optouts">
+            <div class="page-header d-flex justify-content-between align-items-start">
+                <div>
+                    <h1>Opt-Out Suppression List</h1>
+                    <p>Recipients who replied STOP or UNSUBSCRIBE are automatically blocked from future campaigns</p>
+                </div>
+                <button class="btn-outline-custom" onclick="loadOptOuts()"><i class="fas fa-rotate"></i> Refresh</button>
+            </div>
+
+            <div class="row g-4 mb-4">
+                <div class="col-lg-8">
+                    <div class="card-panel">
+                        <div class="card-panel-header"><h3><i class="fas fa-ban" style="color:var(--danger);margin-right:8px;"></i> Suppressed Recipients (<span id="optOutCount">0</span>)</h3></div>
+                        <div class="card-panel-body p-0">
+                            <div class="log-table-wrap" style="max-height:500px;">
+                                <table class="table table-hover mb-0">
+                                    <thead><tr><th>Number</th><th>Date Opted Out</th><th>Reason</th><th>Action</th></tr></thead>
+                                    <tbody id="optOutsTableBody"></tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-lg-4">
+                    <div class="card-panel">
+                        <div class="card-panel-header"><h3><i class="fas fa-user-plus" style="color:var(--accent);margin-right:8px;"></i> Manual Opt-Out</h3></div>
+                        <div class="card-panel-body">
+                            <p style="font-size:0.85rem;color:var(--text-secondary);">Manually suppress a phone number from receiving any bulk messages:</p>
+                            <form id="manualOptOutForm" onsubmit="addManualOptOut(event)">
+                                <div class="mb-3">
+                                    <label class="form-label">Phone Number</label>
+                                    <input type="text" class="form-control" id="manualOptOutNumber" placeholder="+919876543210" required>
+                                </div>
+                                <button type="submit" class="btn-danger-custom w-100"><i class="fas fa-ban"></i> Suppress Number</button>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
         <!-- ═══ HISTORY PAGE ═══ -->
         <section class="page-section" id="page-history">
             <div class="page-header d-flex justify-content-between align-items-start">
-                <div><h1>Message History</h1><p>All previously sent messages</p></div>
+                <div><h1>Message History</h1><p>All previously delivered and recorded messages</p></div>
                 <div class="d-flex gap-2">
                     <button class="btn-outline-custom" onclick="exportHistory()"><i class="fas fa-download"></i> Export Excel</button>
                     <button class="btn-danger-custom" onclick="clearAllHistory()"><i class="fas fa-trash"></i> Clear All</button>
@@ -294,7 +442,7 @@
                         <button type="button" class="filter-pill" data-hist-filter="read" onclick="setHistFilter('read')"><i class="fas fa-eye" style="color:#065f46;"></i> Read <span class="filter-count" id="histCountRead">0</span></button>
                     </div>
                     <div style="display:flex;gap:8px;align-items:center;">
-                        <input type="text" class="form-control" id="histSearch" placeholder="Search number..." style="width:200px;height:36px;font-size:.85rem;" oninput="renderHistory()">
+                        <input type="text" class="form-control" id="histSearch" placeholder="Search number or message..." style="width:220px;height:36px;font-size:.85rem;" oninput="renderHistory()">
                     </div>
                 </div>
                 <div class="card-panel-body p-0">
@@ -307,21 +455,26 @@
 
         <!-- ═══ SETTINGS PAGE ═══ -->
         <section class="page-section" id="page-settings">
-            <div class="page-header"><h1>Settings</h1><p>Configure default values</p></div>
+            <div class="page-header"><h1>Settings</h1><p>Configure defaults and server port</p></div>
             <div class="card-panel">
                 <div class="card-panel-body">
                     <form id="settingsForm">
                         <div class="settings-group">
-                            <h5><i class="fas fa-server"></i> Server</h5>
-                            <div class="row g-3"><div class="col-md-6"><label class="form-label">Port</label><input type="number" class="form-control" id="setPort" value="5000"></div></div>
+                            <h5><i class="fas fa-server"></i> Server Configuration</h5>
+                            <div class="row g-3">
+                                <div class="col-md-6">
+                                    <label class="form-label">Port (1024 - 65535)</label>
+                                    <input type="number" class="form-control" id="setPort" value="5000" min="1024" max="65535" required>
+                                </div>
+                            </div>
                         </div>
                         <div class="settings-group">
-                            <h5><i class="fas fa-shield-halved"></i> Default Anti-Ban Settings</h5>
+                            <h5><i class="fas fa-shield-halved"></i> Default Campaign Delays</h5>
                             <div class="row g-3">
-                                <div class="col-md-3"><label class="form-label">Min Delay</label><input type="number" class="form-control" id="setDelayMin" value="5"></div>
-                                <div class="col-md-3"><label class="form-label">Max Delay</label><input type="number" class="form-control" id="setDelayMax" value="12"></div>
-                                <div class="col-md-3"><label class="form-label">Batch Size</label><input type="number" class="form-control" id="setBatchSize" value="0"></div>
-                                <div class="col-md-3"><label class="form-label">Batch Cooldown</label><input type="number" class="form-control" id="setBatchCooldown" value="60"></div>
+                                <div class="col-md-3"><label class="form-label">Min Delay (sec)</label><input type="number" class="form-control" id="setDelayMin" value="5" min="1" max="300" required></div>
+                                <div class="col-md-3"><label class="form-label">Max Delay (sec)</label><input type="number" class="form-control" id="setDelayMax" value="12" min="1" max="600" required></div>
+                                <div class="col-md-3"><label class="form-label">Batch Size</label><input type="number" class="form-control" id="setBatchSize" value="0" min="0" max="1000" required></div>
+                                <div class="col-md-3"><label class="form-label">Batch Cooldown (sec)</label><input type="number" class="form-control" id="setBatchCooldown" value="60" min="5" max="3600" required></div>
                             </div>
                         </div>
                         <div class="text-end"><button type="submit" class="btn-primary-custom"><i class="fas fa-save"></i> Save Settings</button></div>
@@ -330,6 +483,7 @@
             </div>
         </section>
     </main>
+
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
     <script src="/app.js"></script>
 </body>

@@ -9,6 +9,7 @@ node_modules/
 uploads/
 history.json
 logs.txt
+opt_outs.json
 
 # Build artifacts
 BulkSender-Share.zip
@@ -19,6 +20,8 @@ dist/
 
 # Environment files (use .env.example instead)
 .env
+.env.*
+.env.local
 
 # Freebuff desktop tooling (private)
 .freebuff/

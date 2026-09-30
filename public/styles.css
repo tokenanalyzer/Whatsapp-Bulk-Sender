@@ -98,3 +98,77 @@ textarea.form-control { min-height:130px; resize:vertical; }
 
 .empty-state { padding: 40px; text-align: center; color: var(--text-secondary); }
 .empty-state i { font-size: 2.5rem; color: #d1d5db; margin-bottom: 12px; }
+
+/* Connection state badges */
+.state-badge { display: inline-flex; align-items: center; gap: 6px; padding: 6px 14px; border-radius: 20px; font-size: .8rem; font-weight: 600; }
+.state-badge.disconnected { background: #f3f4f6; color: #6b7280; }
+.state-badge.connecting { background: #fef3c7; color: #92400e; }
+.state-badge.waiting_for_qr { background: #e0f2fe; color: #075985; }
+.state-badge.qr_available { background: #dbeafe; color: #1e40af; }
+.state-badge.authenticated { background: #e0e7ff; color: #3730a3; }
+.state-badge.connected { background: #dcfce7; color: #166534; }
+.state-badge.reconnecting { background: #ffedd5; color: #9a3412; }
+.state-badge.auth_failure { background: #fee2e2; color: #991b1b; }
+
+/* WhatsApp Chat Preview Bubble */
+.chat-preview-box {
+    background: #efeae2;
+    background-image: radial-gradient(#d5ceb5 1px, transparent 1px);
+    background-size: 16px 16px;
+    border-radius: 12px;
+    padding: 16px;
+    min-height: 120px;
+    position: relative;
+    border: 1px solid #d1d7db;
+}
+.chat-bubble {
+    background: #ffffff;
+    border-radius: 8px 8px 8px 0;
+    padding: 10px 14px;
+    max-width: 90%;
+    box-shadow: 0 1px 1px rgba(0,0,0,.1);
+    font-size: .9rem;
+    color: #111b21;
+    white-space: pre-wrap;
+    word-break: break-word;
+    position: relative;
+    line-height: 1.4;
+}
+.chat-bubble::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: -8px;
+    width: 0;
+    height: 0;
+    border: 8px solid transparent;
+    border-right-color: #ffffff;
+    border-bottom: 0;
+}
+.chat-time {
+    font-size: .7rem;
+    color: #667781;
+    float: right;
+    margin-left: 12px;
+    margin-top: 4px;
+}
+
+/* Contact validation summary */
+.contact-summary-card {
+    background: #f8fafc;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px;
+    margin-top: 12px;
+}
+.contact-pill {
+    display: inline-block;
+    padding: 3px 8px;
+    border-radius: 6px;
+    font-size: .75rem;
+    font-weight: 600;
+}
+.contact-pill.valid { background: #dcfce7; color: #166534; }
+.contact-pill.duplicate { background: #fef3c7; color: #92400e; }
+.contact-pill.invalid { background: #fee2e2; color: #991b1b; }
+.contact-pill.suppressed { background: #e0e7ff; color: #3730a3; }
