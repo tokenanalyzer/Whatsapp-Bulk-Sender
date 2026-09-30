@@ -8,6 +8,7 @@ const path = require('path');
 const fs = require('fs');
 
 // Set test environment
+process.env.BULKSENDER_DESKTOP = 'true';
 process.env.BULKSENDER_DATA_DIR = path.join(__dirname, '..', '.test_data');
 if (!fs.existsSync(process.env.BULKSENDER_DATA_DIR)) {
     fs.mkdirSync(process.env.BULKSENDER_DATA_DIR, { recursive: true });
@@ -18,7 +19,7 @@ const app = require('../server');
 function makeRequest(method, pathUrl, body = null, headers = {}) {
     return new Promise((resolve, reject) => {
         const payload = body ? (typeof body === 'string' ? body : JSON.stringify(body)) : null;
-        const reqHeaders = { ...headers };
+        const reqHeaders = { Connection: 'close', ...headers };
         if (payload && !reqHeaders['Content-Type']) {
             reqHeaders['Content-Type'] = 'application/json';
         }
@@ -172,9 +173,20 @@ test('API Integration Suite', async (t) => {
         assert.equal(discRes.body.state, 'disconnected');
     });
 
-    t.after(() => {
+    await t.test('GET /api/status returns initial sending status object', async () => {
+        const statusRes = await makeRequest('GET', '/api/status');
+        assert.equal(statusRes.status, 200);
+        assert.equal(statusRes.body.isSending, false);
+        assert.equal(statusRes.body.sent, 0);
+        assert.equal(statusRes.body.failed, 0);
+    });
+
+    t.after(async () => {
         if (app.server) {
-            app.server.close();
+            if (typeof app.server.closeAllConnections === 'function') {
+                app.server.closeAllConnections();
+            }
+            await new Promise((resolve) => app.server.close(resolve));
         }
         try {
             fs.rmSync(process.env.BULKSENDER_DATA_DIR, { recursive: true, force: true });
