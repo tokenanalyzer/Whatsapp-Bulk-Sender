@@ -274,3 +274,180 @@ test('isMatchingOutgoingMessage handles object remote, newlines, and media match
     assert.ok(isMatchingOutgoingMessage(mediaMsg, '919876543210@c.us', 'Media Caption', {}, sentAtSec));
     assert.ok(isMatchingOutgoingMessage(mediaMsg, '919876543210@c.us', null, {}, sentAtSec));
 });
+
+test('filterGroupChats filters only actual WhatsApp group chats and never returns member/participant lists', () => {
+    const { filterGroupChats } = require('../lib/groupUtils');
+
+    const sampleChats = [
+        {
+            id: { _serialized: '120363025111111111@g.us' },
+            isGroup: true,
+            name: 'Dev Community',
+            unreadCount: 3,
+            timestamp: 1700000000,
+            isReadOnly: false,
+            participants: [{ id: '919876543210@c.us', isAdmin: true }],
+            groupMetadata: { participants: [{ id: '919876543210@c.us' }] },
+        },
+        {
+            id: '120363025222222222@g.us',
+            isGroup: true,
+            name: 'Announcement Group',
+            unreadCount: 0,
+            timestamp: 1700000500,
+            isReadOnly: true,
+            participants: [{ id: '918888888888@c.us' }],
+        },
+        {
+            id: { _serialized: '919876543210@c.us' },
+            isGroup: false,
+            name: 'Direct Contact',
+            unreadCount: 1,
+            timestamp: 1700000100,
+            participants: [],
+        },
+        {
+            id: 'status@broadcast',
+            isGroup: false,
+            name: 'Status',
+            timestamp: 1700000050,
+        },
+        null,
+        undefined,
+    ];
+
+    const result = filterGroupChats(sampleChats);
+
+    // Only the 2 groups should be returned
+    assert.equal(result.length, 2);
+    assert.equal(result[0].id, '120363025222222222@g.us'); // sorted by timestamp desc
+    assert.equal(result[0].name, 'Announcement Group');
+    assert.equal(result[0].isReadOnly, true);
+    assert.equal(result[1].id, '120363025111111111@g.us');
+    assert.equal(result[1].name, 'Dev Community');
+    assert.equal(result[1].unreadCount, 3);
+    assert.equal(result[1].isReadOnly, false);
+
+    // CRITICAL: Verify participant and member lists are strictly absent
+    for (const group of result) {
+        assert.strictEqual(group.participants, undefined, 'Must not expose participants');
+        assert.strictEqual(group.groupMetadata, undefined, 'Must not expose groupMetadata');
+        assert.strictEqual(group.members, undefined, 'Must not expose members');
+    }
+
+    // Handles empty or invalid inputs
+    assert.deepEqual(filterGroupChats(null), []);
+    assert.deepEqual(filterGroupChats([]), []);
+    assert.deepEqual(filterGroupChats('invalid'), []);
+});
+
+test('validateGroupIds deduplicates, validates format, and handles multiple input types', () => {
+    const { validateGroupIds } = require('../lib/groupUtils');
+
+    // 1. Array input with duplicates and invalid IDs
+    const arrInput = [
+        '120363025111111111@g.us',
+        '120363025111111111@g.us', // duplicate
+        '120363025222222222@g.us',
+        '919876543210@c.us',       // invalid (direct number, not group)
+        'invalid_id',              // invalid
+        'group@broadcast',         // invalid
+        '',
+        null,
+    ];
+    const res1 = validateGroupIds(arrInput);
+    assert.deepEqual(res1.validIds, ['120363025111111111@g.us', '120363025222222222@g.us']);
+    assert.equal(res1.duplicatesRemoved, 1);
+    assert.equal(res1.invalidCount, 3);
+
+    // 2. JSON array string input
+    const jsonInput = '["120363025111111111@g.us", "120363025111111111@g.us", "120363025333333333@g.us"]';
+    const res2 = validateGroupIds(jsonInput);
+    assert.deepEqual(res2.validIds, ['120363025111111111@g.us', '120363025333333333@g.us']);
+    assert.equal(res2.duplicatesRemoved, 1);
+    assert.equal(res2.invalidCount, 0);
+
+    // 3. Comma / newline separated string input
+    const strInput = '120363025111111111@g.us, 120363025444444444@g.us\n120363025444444444@g.us';
+    const res3 = validateGroupIds(strInput);
+    assert.deepEqual(res3.validIds, ['120363025111111111@g.us', '120363025444444444@g.us']);
+    assert.equal(res3.duplicatesRemoved, 1);
+
+    // 4. Empty / invalid input
+    assert.deepEqual(validateGroupIds(''), { validIds: [], duplicatesRemoved: 0, invalidCount: 0 });
+    assert.deepEqual(validateGroupIds([]), { validIds: [], duplicatesRemoved: 0, invalidCount: 0 });
+    assert.deepEqual(validateGroupIds(null), { validIds: [], duplicatesRemoved: 0, invalidCount: 0 });
+});
+
+test('confirmMessageSend confirms outgoing group message with @g.us remote JID', async () => {
+    const EventEmitter = require('events');
+    const mockClient = new EventEmitter();
+
+    const targetGroupId = '120363025999999999@g.us';
+    const messageText = 'Important Group Announcement';
+    const sentAtSec = Math.floor(Date.now() / 1000);
+
+    const mockDeliveredMsg = {
+        id: { _serialized: 'true_120363025999999999@g.us_GRP123', remote: targetGroupId },
+        fromMe: true,
+        to: targetGroupId,
+        body: messageText,
+        timestamp: sentAtSec,
+    };
+
+    let sendMessageCallCount = 0;
+    const sendMessageFn = async () => {
+        sendMessageCallCount++;
+        mockClient.emit('message_create', mockDeliveredMsg);
+        return undefined; // simulate pinned web undefined return
+    };
+
+    const result = await confirmMessageSend({
+        waClient: mockClient,
+        chatId: targetGroupId,
+        text: messageText,
+        media: null,
+        sentAtSec,
+        sendMessageFn,
+    });
+
+    assert.ok(result !== null);
+    assert.equal(result.id._serialized, 'true_120363025999999999@g.us_GRP123');
+    assert.equal(sendMessageCallCount, 1, 'Must send exactly once to the group');
+    assert.equal(mockClient.listenerCount('message_create'), 0, 'Listener must be cleaned up');
+});
+
+test('confirmMessageSend throws and does not retry when group message send fails without confirmation', async () => {
+    const EventEmitter = require('events');
+    const mockClient = new EventEmitter();
+
+    const targetGroupId = '120363025999999999@g.us';
+    const messageText = 'Failing Group Message';
+    const sentAtSec = Math.floor(Date.now() / 1000);
+
+    let sendCallCount = 0;
+    const sendMessageFn = async () => {
+        sendCallCount++;
+        throw new Error('Evaluation failed: group admin restricted');
+    };
+
+    await assert.rejects(
+        async () => {
+            await confirmMessageSend({
+                waClient: mockClient,
+                chatId: targetGroupId,
+                text: messageText,
+                media: null,
+                sentAtSec,
+                sendMessageFn,
+                verifyLastMessageFn: async () => null,
+                verifyFetchMessagesFn: async () => null,
+                messageCreateTimeoutMs: 50,
+            });
+        },
+        /group admin restricted/
+    );
+
+    assert.equal(sendCallCount, 1, 'Must never blindly retry on failure');
+    assert.equal(mockClient.listenerCount('message_create'), 0, 'Listener must be cleaned up on error');
+});

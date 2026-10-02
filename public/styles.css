@@ -172,3 +172,96 @@ textarea.form-control { min-height:130px; resize:vertical; }
 .contact-pill.duplicate { background: #fef3c7; color: #92400e; }
 .contact-pill.invalid { background: #fee2e2; color: #991b1b; }
 .contact-pill.suppressed { background: #e0e7ff; color: #3730a3; }
+
+/* Group Messaging Styles */
+.btn-mode-toggle {
+    background: #f3f4f6;
+    border: 1px solid var(--border);
+    color: var(--text-secondary);
+    padding: 8px 18px;
+    border-radius: 10px;
+    font-size: .85rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all .2s;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+.btn-mode-toggle:hover {
+    color: var(--text-primary);
+    border-color: #cbd5e1;
+}
+.btn-mode-toggle.active {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+    box-shadow: 0 2px 8px rgba(37,211,102,.25);
+}
+.group-list-box {
+    max-height: 290px;
+    overflow-y: auto;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: #fafbfc;
+    padding: 6px;
+}
+.group-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 12px;
+    border-radius: 8px;
+    background: #fff;
+    border: 1px solid var(--border);
+    margin-bottom: 6px;
+    transition: all .15s ease;
+    cursor: pointer;
+    user-select: none;
+}
+.group-item:hover {
+    border-color: var(--accent);
+    background: #f0fdf4;
+}
+.group-item.selected {
+    border-color: var(--accent);
+    background: #eefcf3;
+}
+.group-item input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+    cursor: pointer;
+    accent-color: var(--accent);
+}
+.group-item-icon {
+    width: 34px;
+    height: 34px;
+    border-radius: 50%;
+    background: #dcfce7;
+    color: var(--accent-dark);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: .9rem;
+    flex-shrink: 0;
+}
+.group-item-info {
+    flex-grow: 1;
+    overflow: hidden;
+}
+.group-item-name {
+    font-weight: 600;
+    font-size: .85rem;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.group-item-meta {
+    font-size: .75rem;
+    color: var(--text-secondary);
+}
+.badge-group {
+    background: #e0e7ff;
+    color: #3730a3;
+}

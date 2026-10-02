@@ -20,6 +20,7 @@ const {
     verifyViaFetchMessages,
     confirmMessageSend,
 } = require('./lib/messageConfirmation');
+const { filterGroupChats, validateGroupIds } = require('./lib/groupUtils');
 
 const app = express();
 const APP_ROOT = __dirname;
@@ -560,6 +561,150 @@ async function sendBulkMessages(contacts, messageTemplate, mediaPath, options) {
     }
 }
 
+// ─── Group Messaging Helpers & Engine ───
+
+async function sendBulkGroupMessages(groups, messageTemplate, mediaPath, options) {
+    const { delayMin, delayMax, batchSize, batchCooldown } = options;
+
+    sendingStatus.isSending = true;
+    sendingStatus.total = groups.length;
+    sendingStatus.sent = 0;
+    sendingStatus.failed = 0;
+    sendingStatus.pending = groups.length;
+    cancelRequested = false;
+
+    const batchId = new Date().toISOString().replace(/[:.]/g, '-');
+    await waitForWhatsAppComms();
+
+    let media = null;
+    if (mediaPath && fs.existsSync(mediaPath)) {
+        try {
+            media = MessageMedia.fromFilePath(mediaPath);
+        } catch (e) {
+            console.error('[WA] Media load error for group campaign:', e);
+        }
+    }
+
+    try {
+        for (let i = 0; i < groups.length; i++) {
+            if (cancelRequested) {
+                console.log('[WA] Group campaign sending cancelled by user');
+                break;
+            }
+
+            const group = groups[i];
+            const processedMsg = processSpinSyntax(messageTemplate || '');
+
+            let resolvedGroupName = group.name || group.id;
+
+            const log = {
+                recipientType: 'group',
+                groupId: group.id,
+                groupName: resolvedGroupName,
+                number: group.id,
+                name: resolvedGroupName,
+                message: processedMsg && processedMsg.length > 80 ? processedMsg.slice(0, 80) + '...' : processedMsg,
+                fullMessage: processedMsg,
+                status: 'sending',
+                deliveryStatus: 'pending',
+                timestamp: new Date().toISOString().replace('T', ' ').slice(0, 19),
+                batchId,
+                error: '',
+                hasMedia: !!media,
+                messageId: null,
+            };
+
+            try {
+                if (waClient && waClient.pupPage && typeof waClient.pupPage.evaluate === 'function') {
+                    try {
+                        const chatMeta = await waClient.pupPage.evaluate((targetId) => {
+                            try {
+                                const wid = typeof window.require === 'function' ? window.require('WAWebWidFactory').createWid(targetId) : null;
+                                const chatColl = typeof window.require === 'function' ? window.require('WAWebCollections')?.Chat : (window.Store?.Chat);
+                                const chat = wid && chatColl && typeof chatColl.get === 'function' ? chatColl.get(wid) : null;
+                                if (!chat) return null;
+                                return {
+                                    name: chat.name || chat.formattedTitle || targetId,
+                                    isReadOnly: Boolean(chat.isReadOnly || (chat.groupMetadata && chat.groupMetadata.announce) || chat.announce),
+                                };
+                            } catch (e) {
+                                return null;
+                            }
+                        }, group.id);
+
+                        if (chatMeta) {
+                            if (chatMeta.name && chatMeta.name !== group.id) {
+                                resolvedGroupName = chatMeta.name;
+                                log.groupName = chatMeta.name;
+                                log.name = chatMeta.name;
+                            }
+                            if (chatMeta.isReadOnly) {
+                                throw new Error('Group is read-only (only admins can send messages)');
+                            }
+                        }
+                    } catch (metaErr) {
+                        if (metaErr.message && metaErr.message.includes('read-only')) {
+                            throw metaErr;
+                        }
+                    }
+                } else if (waClient && typeof waClient.getChatById === 'function') {
+                    try {
+                        const chat = await waClient.getChatById(group.id);
+                        if (!chat) {
+                            throw new Error('Group chat not found on WhatsApp account');
+                        }
+                        if (chat.name && chat.name !== group.id) {
+                            resolvedGroupName = chat.name;
+                            log.groupName = chat.name;
+                            log.name = chat.name;
+                        }
+                        if (chat.isReadOnly) {
+                            throw new Error('Group is read-only (only admins can send messages)');
+                        }
+                    } catch (chatErr) {
+                        if (!isCommsNotReadyError(chatErr)) {
+                            throw chatErr;
+                        }
+                    }
+                }
+
+                const sentMsg = await sendWhatsAppMessage(group.id, processedMsg, media);
+
+                log.status = 'sent';
+                log.deliveryStatus = 'sent';
+                log.messageId = sentMsg && sentMsg.id ? (sentMsg.id._serialized || sentMsg.id.id || sentMsg.id) : null;
+                sendingStatus.sent++;
+            } catch (err) {
+                log.status = 'failed';
+                log.deliveryStatus = 'failed';
+                log.error = (err.message || String(err)).slice(0, 150);
+                sendingStatus.failed++;
+            }
+
+            sendingStatus.pending--;
+            messageLogs.push(log);
+            allHistory.push(log);
+
+            if (i < groups.length - 1 && !cancelRequested) {
+                const delay = Math.floor(Math.random() * (delayMax - delayMin + 1)) + delayMin;
+                await interruptibleSleep(delay * 1000);
+
+                if (batchSize && (i + 1) % batchSize === 0 && !cancelRequested) {
+                    console.log(`[WA] Group campaign batch cooldown: ${batchCooldown}s`);
+                    await interruptibleSleep(batchCooldown * 1000);
+                }
+            }
+        }
+    } finally {
+        sendingStatus.isSending = false;
+        saveHistory();
+
+        if (mediaPath && fs.existsSync(mediaPath)) {
+            try { fs.unlinkSync(mediaPath); } catch (e) {}
+        }
+    }
+}
+
 // ─── API Routes ───
 // Health Check Endpoint
 app.get(['/health', '/api/health'], (req, res) => {
@@ -775,6 +920,166 @@ app.post('/api/send', async (req, res) => {
         duplicatesRemoved: parsedResult.duplicates.length,
         invalidCount: parsedResult.invalid.length,
         suppressedCount: suppressed.length,
+    });
+});
+
+// Group Messaging Endpoints
+app.get('/api/groups', async (req, res) => {
+    if (!waClient || !waReady) {
+        return res.status(400).json({ error: 'WhatsApp is not connected. Please connect WhatsApp first.' });
+    }
+    try {
+        let chats = [];
+
+        // Direct in-page extraction to avoid WAWebLidMigrationUtils/groupMetadata crash on pinned WhatsApp Web
+        if (waClient.pupPage && typeof waClient.pupPage.evaluate === 'function') {
+            try {
+                const evaluated = await waClient.pupPage.evaluate(() => {
+                    try {
+                        let models = [];
+                        if (typeof window.require === 'function') {
+                            try {
+                                const collections = window.require('WAWebCollections');
+                                if (collections && collections.Chat) {
+                                    models = typeof collections.Chat.getModelsArray === 'function'
+                                        ? collections.Chat.getModelsArray()
+                                        : (collections.Chat.models || []);
+                                }
+                            } catch (e) {}
+                        }
+                        if ((!models || models.length === 0) && window.Store && window.Store.Chat) {
+                            models = window.Store.Chat.models || (typeof window.Store.Chat.getModelsArray === 'function' ? window.Store.Chat.getModelsArray() : []);
+                        }
+                        if (!Array.isArray(models)) return null;
+
+                        return models
+                            .filter(c => {
+                                if (!c) return false;
+                                const id = c.id && c.id._serialized ? c.id._serialized : (typeof c.id === 'string' ? c.id : '');
+                                return c.isGroup === true || id.endsWith('@g.us');
+                            })
+                            .map(c => {
+                                const id = c.id && c.id._serialized ? c.id._serialized : (typeof c.id === 'string' ? c.id : String(c.id || ''));
+                                return {
+                                    id,
+                                    name: c.name || c.formattedTitle || (c.contact && (c.contact.name || c.contact.pushname)) || id,
+                                    unreadCount: typeof c.unreadCount === 'number' ? c.unreadCount : 0,
+                                    timestamp: typeof c.t === 'number' ? c.t : (typeof c.timestamp === 'number' ? c.timestamp : 0),
+                                    isReadOnly: Boolean(c.isReadOnly || (c.groupMetadata && c.groupMetadata.announce) || c.announce),
+                                    archived: Boolean(c.archive || c.archived),
+                                    pinned: Boolean(c.pin || c.pinned),
+                                    isGroup: true,
+                                };
+                            });
+                    } catch (e) {
+                        return null;
+                    }
+                });
+                if (Array.isArray(evaluated) && evaluated.length > 0) {
+                    chats = evaluated;
+                }
+            } catch (evalErr) {
+                console.warn('[WA] pupPage evaluate for groups fallback:', evalErr.message || evalErr);
+            }
+        }
+
+        if (chats.length === 0 && typeof waClient.getChats === 'function') {
+            chats = await waClient.getChats();
+        }
+
+        const groups = filterGroupChats(chats);
+        res.json({
+            success: true,
+            groups,
+            count: groups.length,
+        });
+    } catch (err) {
+        console.error('[WA] Failed to fetch groups:', err && err.message ? err.message : err);
+        res.status(500).json({ error: 'Failed to retrieve WhatsApp groups: ' + (err.message || String(err)) });
+    }
+});
+
+app.post('/api/groups/send', async (req, res) => {
+    if (!waClient || !waReady) {
+        return res.status(400).json({ error: 'WhatsApp is not connected. Please link WhatsApp first.' });
+    }
+
+    if (sendingStatus.isSending) {
+        return res.status(400).json({ error: 'Another campaign is currently in progress. Please wait or cancel it first.' });
+    }
+
+    let message = (req.body.message_text || '').trim();
+
+    if (req.files && req.files.message_file) {
+        try {
+            message = req.files.message_file.data.toString('utf-8').trim();
+        } catch (e) {
+            return res.status(400).json({ error: 'Could not read message template file.' });
+        }
+    }
+
+    let mediaPath = null;
+    if (req.files && req.files.media_file) {
+        const mediaFile = req.files.media_file;
+        if (mediaFile.size > 50 * 1024 * 1024) {
+            return res.status(400).json({ error: 'Media file exceeds 50MB limit.' });
+        }
+        const safeBase = path.basename(mediaFile.name || 'file').replace(/[^a-zA-Z0-9._-]/g, '_');
+        const safeName = `media_${Date.now()}_${safeBase}`;
+        mediaPath = path.join(UPLOAD_DIR, safeName);
+        try {
+            await mediaFile.mv(mediaPath);
+        } catch (e) {
+            if (mediaPath && fs.existsSync(mediaPath)) try { fs.unlinkSync(mediaPath); } catch (e2) {}
+            return res.status(400).json({ error: 'Could not save media attachment: ' + (e.message || String(e)) });
+        }
+    }
+
+    if (!message && !mediaPath) {
+        return res.status(400).json({ error: 'Please provide a message text, media file, or both.' });
+    }
+
+    const { validIds, duplicatesRemoved, invalidCount } = validateGroupIds(req.body.group_ids);
+
+    if (validIds.length === 0) {
+        if (mediaPath && fs.existsSync(mediaPath)) try { fs.unlinkSync(mediaPath); } catch (e) {}
+        return res.status(400).json({ error: 'Please select at least one valid WhatsApp group.' });
+    }
+
+    let groupNamesMap = {};
+    if (req.body.group_names) {
+        try {
+            groupNamesMap = typeof req.body.group_names === 'string'
+                ? JSON.parse(req.body.group_names)
+                : req.body.group_names;
+        } catch (e) {}
+    }
+
+    const validGroups = validIds.map(id => ({
+        id,
+        name: groupNamesMap[id] || id,
+    }));
+
+    const options = {
+        delayMin: Math.max(1, parseInt(req.body.delay_min, 10) || 5),
+        delayMax: Math.max(1, parseInt(req.body.delay_max, 10) || 12),
+        batchSize: Math.max(0, parseInt(req.body.batch_size, 10) || 0),
+        batchCooldown: Math.max(5, parseInt(req.body.batch_cooldown, 10) || 60),
+    };
+
+    messageLogs = [];
+    sendBulkGroupMessages(validGroups, message, mediaPath, options).catch(err => {
+        console.error('[WA] Group send pipeline error:', err && err.message ? err.message : err);
+        sendingStatus.isSending = false;
+        if (mediaPath && fs.existsSync(mediaPath)) try { fs.unlinkSync(mediaPath); } catch (e) {}
+    });
+
+    res.json({
+        success: true,
+        message: `Group campaign started for ${validGroups.length} groups`,
+        total: validGroups.length,
+        duplicatesRemoved,
+        invalidCount,
     });
 });
 
@@ -1027,5 +1332,16 @@ app.clearTimers = () => {
         historySaveTimer = null;
     }
 };
+app.filterGroupChats = filterGroupChats;
+app.validateGroupIds = validateGroupIds;
+app.sendBulkGroupMessages = sendBulkGroupMessages;
+app.setWhatsAppClient = (client) => { waClient = client; };
+app.setWhatsAppReady = (ready) => {
+    waReady = ready;
+    waState = ready ? 'connected' : 'disconnected';
+};
+app.getSendingStatus = () => sendingStatus;
+app.getMessageLogs = () => messageLogs;
+app.requestCancel = () => { cancelRequested = true; };
 
 module.exports = app;

@@ -363,6 +363,187 @@ function clearMedia() {
     document.getElementById('mediaPreview').style.display = 'none';
 }
 
+// ─── Recipient Mode & Group Management ───
+let currentRecipientMode = 'numbers';
+let groupsCache = [];
+let selectedGroupIds = new Set();
+
+function setRecipientMode(mode) {
+    currentRecipientMode = mode;
+    const btnNumbers = document.getElementById('btnModeNumbers');
+    const btnGroups = document.getElementById('btnModeGroups');
+    const numPane = document.getElementById('recipientNumbersContainer');
+    const grpPane = document.getElementById('recipientGroupsContainer');
+    const btnPreview = document.getElementById('btnContactPreview');
+    const sendBtn = document.getElementById('sendBtn');
+
+    if (mode === 'groups') {
+        if (btnNumbers) btnNumbers.classList.remove('active');
+        if (btnGroups) btnGroups.classList.add('active');
+        if (numPane) numPane.style.display = 'none';
+        if (grpPane) grpPane.style.display = 'block';
+        if (btnPreview) btnPreview.style.display = 'none';
+        if (sendBtn && !sendBtn.disabled) sendBtn.innerHTML = '<i class="fas fa-users"></i> Start Group Campaign';
+        if (groupsCache.length === 0 && waConnected) {
+            loadGroups();
+        }
+    } else {
+        if (btnNumbers) btnNumbers.classList.add('active');
+        if (btnGroups) btnGroups.classList.remove('active');
+        if (numPane) numPane.style.display = 'block';
+        if (grpPane) grpPane.style.display = 'none';
+        if (btnPreview) btnPreview.style.display = 'inline-block';
+        if (sendBtn && !sendBtn.disabled) sendBtn.innerHTML = '<i class="fab fa-whatsapp"></i> Start Campaign';
+    }
+}
+
+async function loadGroups(forceRefresh = false) {
+    if (!waConnected) {
+        showToast('Please connect WhatsApp first to load groups.', 'warning');
+        return;
+    }
+    const loadingEl = document.getElementById('groupListLoading');
+    const emptyEl = document.getElementById('groupListEmpty');
+    const itemsEl = document.getElementById('groupListItems');
+    const refreshBtn = document.getElementById('btnRefreshGroups');
+
+    if (loadingEl) loadingEl.style.display = 'block';
+    if (emptyEl) emptyEl.style.display = 'none';
+    if (itemsEl) itemsEl.innerHTML = '';
+    if (refreshBtn) refreshBtn.disabled = true;
+
+    try {
+        const resp = await fetch('/api/groups');
+        const data = await resp.json();
+        if (data.error) {
+            showToast(data.error, 'error');
+            if (emptyEl) {
+                emptyEl.style.display = 'block';
+                emptyEl.querySelector('.small').textContent = data.error;
+            }
+            return;
+        }
+        groupsCache = Array.isArray(data.groups) ? data.groups : [];
+        const countBadge = document.getElementById('groupsCountBadge');
+        if (countBadge) countBadge.textContent = `${groupsCache.length} groups available`;
+        renderGroupsList();
+        if (forceRefresh) showToast(`Loaded ${groupsCache.length} WhatsApp groups`, 'success');
+    } catch (err) {
+        showToast('Failed to load groups: ' + err.message, 'error');
+        if (emptyEl) {
+            emptyEl.style.display = 'block';
+            emptyEl.querySelector('.small').textContent = 'Could not load groups. Check connection.';
+        }
+    } finally {
+        if (loadingEl) loadingEl.style.display = 'none';
+        if (refreshBtn) refreshBtn.disabled = false;
+    }
+}
+
+function renderGroupsList() {
+    const itemsEl = document.getElementById('groupListItems');
+    const emptyEl = document.getElementById('groupListEmpty');
+    if (!itemsEl) return;
+
+    const query = (document.getElementById('groupSearchInput')?.value || '').toLowerCase().trim();
+    const filtered = groupsCache.filter(g =>
+        (g.name || '').toLowerCase().includes(query) ||
+        (g.id || '').toLowerCase().includes(query)
+    );
+
+    itemsEl.innerHTML = '';
+    if (filtered.length === 0) {
+        if (emptyEl) {
+            emptyEl.style.display = 'block';
+            emptyEl.querySelector('.small').textContent = query
+                ? 'No groups match your search query.'
+                : 'No WhatsApp groups found for this account.';
+        }
+        return;
+    }
+    if (emptyEl) emptyEl.style.display = 'none';
+
+    filtered.forEach(g => {
+        const isSelected = selectedGroupIds.has(g.id);
+        const itemDiv = document.createElement('div');
+        itemDiv.className = `group-item ${isSelected ? 'selected' : ''}`;
+        itemDiv.dataset.groupId = g.id;
+
+        const readOnlyBadge = g.isReadOnly
+            ? `<span class="badge bg-warning text-dark" style="font-size:0.65rem;margin-left:6px;">Read Only</span>`
+            : '';
+        const unreadBadge = g.unreadCount > 0
+            ? `<span class="badge bg-success" style="font-size:0.65rem;margin-left:6px;">${g.unreadCount} unread</span>`
+            : '';
+
+        itemDiv.innerHTML = `
+            <input type="checkbox" value="${escapeHtml(g.id)}" ${isSelected ? 'checked' : ''}>
+            <div class="group-item-icon"><i class="fas fa-users"></i></div>
+            <div class="group-item-info">
+                <div class="group-item-name">${escapeHtml(g.name)}${readOnlyBadge}${unreadBadge}</div>
+                <div class="group-item-meta"><code>${escapeHtml(g.id)}</code></div>
+            </div>
+        `;
+
+        const checkbox = itemDiv.querySelector('input[type="checkbox"]');
+        checkbox.addEventListener('click', (e) => {
+            e.stopPropagation();
+        });
+        checkbox.addEventListener('change', () => {
+            toggleGroupSelection(g.id, checkbox.checked, itemDiv);
+        });
+
+        itemDiv.addEventListener('click', (e) => {
+            if (e.target.tagName.toLowerCase() !== 'input') {
+                checkbox.checked = !checkbox.checked;
+                toggleGroupSelection(g.id, checkbox.checked, itemDiv);
+            }
+        });
+
+        itemsEl.appendChild(itemDiv);
+    });
+
+    updateSelectedGroupCount();
+}
+
+function toggleGroupSelection(groupId, isSelected, itemElement) {
+    if (isSelected) {
+        selectedGroupIds.add(groupId);
+        if (itemElement) itemElement.classList.add('selected');
+    } else {
+        selectedGroupIds.delete(groupId);
+        if (itemElement) itemElement.classList.remove('selected');
+    }
+    updateSelectedGroupCount();
+}
+
+function selectAllGroups() {
+    const query = (document.getElementById('groupSearchInput')?.value || '').toLowerCase().trim();
+    const visible = groupsCache.filter(g =>
+        (g.name || '').toLowerCase().includes(query) ||
+        (g.id || '').toLowerCase().includes(query)
+    );
+    visible.forEach(g => selectedGroupIds.add(g.id));
+    renderGroupsList();
+}
+
+function clearGroupSelection() {
+    selectedGroupIds.clear();
+    renderGroupsList();
+}
+
+function updateSelectedGroupCount() {
+    const badge = document.getElementById('selectedGroupCount');
+    if (badge) {
+        badge.textContent = `${selectedGroupIds.size} selected`;
+        badge.className = selectedGroupIds.size > 0 ? 'badge bg-success' : 'badge bg-secondary';
+    }
+}
+
+function filterGroupsList() {
+    renderGroupsList();
+}
+
 // ─── Campaign Send Form ───
 document.getElementById('sendForm').addEventListener('submit', async function(e) {
     e.preventDefault();
@@ -378,18 +559,44 @@ document.getElementById('sendForm').addEventListener('submit', async function(e)
     document.getElementById('cancelBtn').style.display = 'inline-block';
 
     try {
-        const resp = await fetch('/api/send', { method: 'POST', body: new FormData(this) });
+        let resp;
+        if (currentRecipientMode === 'groups') {
+            if (selectedGroupIds.size === 0) {
+                showToast('Please select at least one WhatsApp group.', 'error');
+                btn.disabled = false;
+                btn.innerHTML = '<i class="fas fa-users"></i> Start Group Campaign';
+                document.getElementById('cancelBtn').style.display = 'none';
+                return;
+            }
+
+            const formData = new FormData(this);
+            const groupIdsArray = Array.from(selectedGroupIds);
+            formData.set('group_ids', JSON.stringify(groupIdsArray));
+
+            const nameMap = {};
+            groupsCache.forEach(g => {
+                if (selectedGroupIds.has(g.id)) nameMap[g.id] = g.name;
+            });
+            formData.set('group_names', JSON.stringify(nameMap));
+
+            resp = await fetch('/api/groups/send', { method: 'POST', body: formData });
+        } else {
+            resp = await fetch('/api/send', { method: 'POST', body: new FormData(this) });
+        }
+
         const data = await resp.json();
 
         if (data.error) {
             showToast(data.error, 'error');
             btn.disabled = false;
-            btn.innerHTML = '<i class="fab fa-whatsapp"></i> Start Campaign';
+            btn.innerHTML = currentRecipientMode === 'groups'
+                ? '<i class="fas fa-users"></i> Start Group Campaign'
+                : '<i class="fab fa-whatsapp"></i> Start Campaign';
             document.getElementById('cancelBtn').style.display = 'none';
             return;
         }
 
-        showToast(data.message || `Started sending to ${data.total} contacts...`, 'info');
+        showToast(data.message || `Started campaign for ${data.total} targets...`, 'info');
         document.getElementById('sendProgress').style.display = 'block';
         document.getElementById('sendLogs').style.display = 'block';
         document.getElementById('liveProgress').style.display = 'block';
@@ -398,7 +605,9 @@ document.getElementById('sendForm').addEventListener('submit', async function(e)
     } catch (err) {
         showToast('Send request failed: ' + err.message, 'error');
         btn.disabled = false;
-        btn.innerHTML = '<i class="fab fa-whatsapp"></i> Start Campaign';
+        btn.innerHTML = currentRecipientMode === 'groups'
+            ? '<i class="fas fa-users"></i> Start Group Campaign'
+            : '<i class="fab fa-whatsapp"></i> Start Campaign';
         document.getElementById('cancelBtn').style.display = 'none';
     }
 });
@@ -442,7 +651,9 @@ async function fetchStatus() {
 
             const btn = document.getElementById('sendBtn');
             btn.disabled = false;
-            btn.innerHTML = '<i class="fab fa-whatsapp"></i> Start Campaign';
+            btn.innerHTML = currentRecipientMode === 'groups'
+                ? '<i class="fas fa-users"></i> Start Group Campaign'
+                : '<i class="fab fa-whatsapp"></i> Start Campaign';
             document.getElementById('cancelBtn').style.display = 'none';
             showToast(`Campaign finished: ${data.sent} delivered, ${data.failed} failed`);
             refreshDashboard();
@@ -471,9 +682,13 @@ function updateSendLogs(logs) {
         const mediaIcon = log.hasMedia ? '<i class="fas fa-paperclip" style="color:var(--accent);margin-left:4px;"></i>' : '';
         const delivery = log.status === 'sent' ? getDeliveryBadge(log.deliveryStatus) : '-';
 
+        const recipientDisplay = log.recipientType === 'group'
+            ? `<span class="badge-status badge-group" style="font-size:0.7rem;margin-right:4px;"><i class="fas fa-users"></i> Group</span><strong>${escapeHtml(log.groupName || log.name || log.groupId || log.number)}</strong>`
+            : `<code>${escapeHtml(log.number)}</code>`;
+
         tbody.innerHTML += `<tr>
             <td>${i + 1}</td>
-            <td><code>${escapeHtml(log.number)}</code></td>
+            <td>${recipientDisplay}</td>
             <td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(log.message)}${mediaIcon}</td>
             <td><span class="badge-status ${cls}"><i class="fas fa-${icon}"></i> ${escapeHtml(log.status)}</span></td>
             <td>${delivery}</td>
@@ -522,7 +737,10 @@ function renderRecentLogs() {
     recent.forEach(log => {
         const cls = log.status === 'sent' ? 'badge-sent' : 'badge-failed';
         const errorTip = log.error ? ` title="${escapeHtml(log.error)}"` : '';
-        tbody.innerHTML += `<tr${errorTip}><td><code>${escapeHtml(log.number)}</code></td><td><span class="badge-status ${cls}">${escapeHtml(log.status)}</span></td><td><small>${escapeHtml(log.timestamp)}</small></td></tr>`;
+        const recipientDisplay = log.recipientType === 'group'
+            ? `<span class="badge-status badge-group" style="font-size:0.65rem;margin-right:4px;"><i class="fas fa-users"></i></span>${escapeHtml(log.groupName || log.name || log.groupId || log.number)}`
+            : `<code>${escapeHtml(log.number)}</code>`;
+        tbody.innerHTML += `<tr${errorTip}><td>${recipientDisplay}</td><td><span class="badge-status ${cls}">${escapeHtml(log.status)}</span></td><td><small>${escapeHtml(log.timestamp)}</small></td></tr>`;
     });
 }
 
@@ -571,6 +789,8 @@ function renderHistory() {
     if (search) {
         filtered = filtered.filter(h =>
             (h.number || '').toLowerCase().includes(search) ||
+            (h.groupName || '').toLowerCase().includes(search) ||
+            (h.name || '').toLowerCase().includes(search) ||
             (h.message || '').toLowerCase().includes(search)
         );
     }
@@ -586,9 +806,12 @@ function renderHistory() {
     filtered.slice().reverse().forEach((log, i) => {
         const cls = log.status === 'sent' ? 'badge-sent' : 'badge-failed';
         const delivery = log.status === 'sent' ? getDeliveryBadge(log.deliveryStatus) : '-';
+        const recipientDisplay = log.recipientType === 'group'
+            ? `<span class="badge-status badge-group" style="font-size:0.7rem;margin-right:4px;"><i class="fas fa-users"></i> Group</span><strong>${escapeHtml(log.groupName || log.name || log.groupId || log.number)}</strong>`
+            : `<code>${escapeHtml(log.number)}</code>`;
         tbody.innerHTML += `<tr>
             <td>${i + 1}</td>
-            <td><code>${escapeHtml(log.number)}</code></td>
+            <td>${recipientDisplay}</td>
             <td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escapeHtml(log.fullMessage || log.message || '')}">${escapeHtml(log.message)}</td>
             <td><span class="badge-status ${cls}">${escapeHtml(log.status)}</span></td>
             <td>${delivery}</td>

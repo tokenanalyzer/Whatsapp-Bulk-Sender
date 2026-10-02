@@ -180,6 +180,214 @@ test('API Integration Suite', async (t) => {
         assert.ok(sendRes.body.error.includes('WhatsApp is not connected'));
     });
 
+    await t.test('GET /api/groups rejects gracefully if WhatsApp is not connected', async () => {
+        const res = await makeRequest('GET', '/api/groups');
+        assert.equal(res.status, 400);
+        assert.ok(res.body.error.includes('WhatsApp is not connected'));
+    });
+
+    await t.test('POST /api/groups/send rejects gracefully if WhatsApp is not connected', async () => {
+        const res = await makeRequest('POST', '/api/groups/send', {
+            group_ids: '120363025111111111@g.us',
+            message_text: 'Test group message',
+        });
+        assert.equal(res.status, 400);
+        assert.ok(res.body.error.includes('WhatsApp is not connected'));
+    });
+
+    await t.test('Group messaging pipeline: discovery, validation, single-send, confirmation, and cancellation', async () => {
+        const EventEmitter = require('events');
+        const mockClient = new EventEmitter();
+
+        const group1Id = '120363025111111111@g.us';
+        const group2Id = '120363025222222222@g.us';
+        const group3Id = '120363025333333333@g.us';
+
+        const mockChats = [
+            {
+                id: { _serialized: group1Id },
+                isGroup: true,
+                name: 'Product Updates',
+                unreadCount: 1,
+                timestamp: 1700000100,
+                isReadOnly: false,
+                participants: [{ id: '919876543210@c.us' }],
+            },
+            {
+                id: { _serialized: group2Id },
+                isGroup: true,
+                name: 'Beta Testers',
+                unreadCount: 0,
+                timestamp: 1700000200,
+                isReadOnly: false,
+                participants: [{ id: '918888888888@c.us' }],
+            },
+            {
+                id: { _serialized: group3Id },
+                isGroup: true,
+                name: 'Announcements (Read Only)',
+                unreadCount: 0,
+                timestamp: 1700000300,
+                isReadOnly: true,
+                participants: [{ id: '917777777777@c.us' }],
+            },
+            {
+                id: { _serialized: '919876543210@c.us' },
+                isGroup: false,
+                name: 'Alice',
+                unreadCount: 0,
+            }
+        ];
+
+        mockClient.getState = async () => 'CONNECTED';
+        mockClient.isRegisteredUser = async () => true;
+        mockClient.getChats = async () => mockChats;
+        mockClient.getChatById = async (id) => {
+            const found = mockChats.find(c => (c.id._serialized || c.id) === id);
+            return found || null;
+        };
+
+        const sentGroupCalls = [];
+        mockClient.sendMessage = async (chatId, text, options) => {
+            sentGroupCalls.push({ chatId, text, options });
+            const sentAtSec = Math.floor(Date.now() / 1000);
+            mockClient.emit('message_create', {
+                id: { _serialized: `true_${chatId}_MSG_${Date.now()}`, remote: chatId },
+                fromMe: true,
+                to: chatId,
+                body: text,
+                timestamp: sentAtSec,
+            });
+            return undefined;
+        };
+
+        // Connect simulated client
+        app.setWhatsAppClient(mockClient);
+        app.setWhatsAppReady(true);
+
+        try {
+            // 1. GET /api/groups returns filtered groups without participant lists
+            const groupsRes = await makeRequest('GET', '/api/groups');
+            assert.equal(groupsRes.status, 200);
+            assert.equal(groupsRes.body.count, 3);
+            assert.equal(groupsRes.body.groups.length, 3);
+            for (const g of groupsRes.body.groups) {
+                assert.ok(g.id.endsWith('@g.us'));
+                assert.strictEqual(g.participants, undefined, 'Must never return participant lists');
+            }
+
+            // 2. Reject empty group selection
+            const emptyRes = await makeRequest('POST', '/api/groups/send', {
+                group_ids: '',
+                message_text: 'Hello Group',
+            });
+            assert.equal(emptyRes.status, 400);
+            assert.ok(emptyRes.body.error.includes('Please select at least one valid WhatsApp group'));
+
+            // 3. Reject non-group recipient IDs
+            const invalidRes = await makeRequest('POST', '/api/groups/send', {
+                group_ids: '919876543210@c.us',
+                message_text: 'Hello Group',
+            });
+            assert.equal(invalidRes.status, 400);
+
+            // 4. Send to valid group with duplicate removed
+            const sendRes = await makeRequest('POST', '/api/groups/send', {
+                group_ids: `${group1Id}, ${group1Id}`,
+                message_text: 'Automated Group Notice',
+                delay_min: 1,
+                delay_max: 1,
+            });
+            assert.equal(sendRes.status, 200);
+            assert.equal(sendRes.body.success, true);
+            assert.equal(sendRes.body.total, 1);
+            assert.equal(sendRes.body.duplicatesRemoved, 1);
+
+            // Wait for campaign completion
+            let status;
+            for (let i = 0; i < 30; i++) {
+                await new Promise(r => setTimeout(r, 100));
+                const sRes = await makeRequest('GET', '/api/status');
+                status = sRes.body;
+                if (!status.isSending) break;
+            }
+
+            assert.equal(status.isSending, false);
+            assert.equal(status.sent, 1);
+            assert.equal(status.failed, 0);
+
+            // Verify exactly one sendMessage call was made
+            assert.equal(sentGroupCalls.length, 1);
+            assert.equal(sentGroupCalls[0].chatId, group1Id);
+
+            // Verify history has recipientType: 'group' and group metadata
+            const histRes = await makeRequest('GET', '/api/history');
+            assert.equal(histRes.status, 200);
+            const groupRecord = histRes.body.find(h => h.groupId === group1Id);
+            assert.ok(groupRecord, 'Group history record must exist');
+            assert.equal(groupRecord.recipientType, 'group');
+            assert.equal(groupRecord.groupName, 'Product Updates');
+            assert.equal(groupRecord.status, 'sent');
+            assert.ok(groupRecord.messageId.startsWith(`true_${group1Id}_MSG_`));
+
+            // 5. Test read-only group rejection without resend
+            const roSendRes = await makeRequest('POST', '/api/groups/send', {
+                group_ids: group3Id,
+                message_text: 'Should fail because read-only',
+                delay_min: 1,
+                delay_max: 1,
+            });
+            assert.equal(roSendRes.status, 200);
+
+            for (let i = 0; i < 30; i++) {
+                await new Promise(r => setTimeout(r, 100));
+                const sRes = await makeRequest('GET', '/api/status');
+                status = sRes.body;
+                if (!status.isSending) break;
+            }
+
+            assert.equal(status.failed, 1);
+            const roRecord = (await makeRequest('GET', '/api/history')).body.find(h => h.groupId === group3Id);
+            assert.ok(roRecord);
+            assert.equal(roRecord.status, 'failed');
+            assert.ok(roRecord.error.includes('read-only'));
+
+            // 6. Test cancellation stops remaining groups
+            sentGroupCalls.length = 0;
+            const multiRes = await makeRequest('POST', '/api/groups/send', {
+                group_ids: `${group1Id}, ${group2Id}`,
+                message_text: 'Will be cancelled',
+                delay_min: 5,
+                delay_max: 5,
+            });
+            assert.equal(multiRes.status, 200);
+
+            // Cancel immediately
+            const cancelRes = await makeRequest('POST', '/api/cancel');
+            assert.equal(cancelRes.status, 200);
+
+            for (let i = 0; i < 30; i++) {
+                await new Promise(r => setTimeout(r, 100));
+                const sRes = await makeRequest('GET', '/api/status');
+                if (!sRes.body.isSending) break;
+            }
+
+            assert.ok(sentGroupCalls.length <= 1, 'Cancellation must prevent subsequent group sends');
+
+        } finally {
+            app.setWhatsAppClient(null);
+            app.setWhatsAppReady(false);
+            const st = app.getSendingStatus();
+            if (st) {
+                st.isSending = false;
+                st.sent = 0;
+                st.failed = 0;
+                st.total = 0;
+                st.pending = 0;
+            }
+        }
+    });
+
     await t.test('POST /api/disconnect gracefully sets state to disconnected', async () => {
         const discRes = await makeRequest('POST', '/api/disconnect');
         assert.equal(discRes.status, 200);

@@ -218,46 +218,91 @@
                         <div class="card-panel">
                             <div class="card-panel-header">
                                 <h3><i class="fas fa-address-book" style="color:var(--accent);margin-right:8px;"></i> 1. Recipients</h3>
-                                <button type="button" class="btn-outline-custom" style="padding:4px 12px;font-size:0.75rem;" onclick="previewContacts()"><i class="fas fa-eye"></i> Validate & Preview</button>
+                                <button type="button" id="btnContactPreview" class="btn-outline-custom" style="padding:4px 12px;font-size:0.75rem;" onclick="previewContacts()"><i class="fas fa-eye"></i> Validate & Preview</button>
                             </div>
                             <div class="card-panel-body">
-                                <div class="mb-3">
-                                    <label class="form-label">Default Country Code (Optional)</label>
-                                    <input type="text" class="form-control" name="default_country_code" id="defaultCountryCode" placeholder="e.g. 91 for India, 1 for US/Canada, 44 for UK" style="max-width:240px;font-size:0.85rem;">
-                                    <small class="text-muted">Used automatically if numbers in list lack an international prefix</small>
+                                <div class="mb-3 d-flex gap-2">
+                                    <button type="button" class="btn-mode-toggle active" id="btnModeNumbers" onclick="setRecipientMode('numbers')">
+                                        <i class="fas fa-user"></i> Direct Numbers
+                                    </button>
+                                    <button type="button" class="btn-mode-toggle" id="btnModeGroups" onclick="setRecipientMode('groups')">
+                                        <i class="fas fa-users"></i> WhatsApp Groups
+                                    </button>
                                 </div>
 
-                                <ul class="nav nav-tabs-custom nav-tabs">
-                                    <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#numText" type="button">Type Numbers</button></li>
-                                    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#numFile" type="button">Upload File (.csv, .xlsx, .txt)</button></li>
-                                </ul>
-                                <div class="tab-content">
-                                    <div class="tab-pane fade show active" id="numText">
-                                        <textarea class="form-control" name="numbers_text" id="numbersText" placeholder="+919876543210&#10;+918765432109&#10;9876543210, John Doe"></textarea>
-                                        <small class="text-muted mt-1 d-block">One per line. Formats: <code>+919876543210</code> or <code>+919876543210, Name</code></small>
+                                <!-- NUMBERS MODE PANE -->
+                                <div id="recipientNumbersContainer">
+                                    <div class="mb-3">
+                                        <label class="form-label">Default Country Code (Optional)</label>
+                                        <input type="text" class="form-control" name="default_country_code" id="defaultCountryCode" placeholder="e.g. 91 for India, 1 for US/Canada, 44 for UK" style="max-width:240px;font-size:0.85rem;">
+                                        <small class="text-muted">Used automatically if numbers in list lack an international prefix</small>
                                     </div>
-                                    <div class="tab-pane fade" id="numFile">
-                                        <div class="upload-zone" id="numUploadZone" onclick="document.getElementById('numbersFile').click()">
-                                            <i class="fas fa-cloud-upload-alt d-block"></i><span id="numFileName">Drop or click to upload CSV/Excel</span><br>
-                                            <small class="text-muted">.xlsx, .csv, or .txt with Phone, Name, and custom columns</small>
+
+                                    <ul class="nav nav-tabs-custom nav-tabs">
+                                        <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#numText" type="button">Type Numbers</button></li>
+                                        <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#numFile" type="button">Upload File (.csv, .xlsx, .txt)</button></li>
+                                    </ul>
+                                    <div class="tab-content">
+                                        <div class="tab-pane fade show active" id="numText">
+                                            <textarea class="form-control" name="numbers_text" id="numbersText" placeholder="+919876543210&#10;+918765432109&#10;9876543210, John Doe"></textarea>
+                                            <small class="text-muted mt-1 d-block">One per line. Formats: <code>+919876543210</code> or <code>+919876543210, Name</code></small>
                                         </div>
-                                        <input type="file" id="numbersFile" name="numbers_file" accept=".txt,.csv,.xlsx,.xls" hidden>
+                                        <div class="tab-pane fade" id="numFile">
+                                            <div class="upload-zone" id="numUploadZone" onclick="document.getElementById('numbersFile').click()">
+                                                <i class="fas fa-cloud-upload-alt d-block"></i><span id="numFileName">Drop or click to upload CSV/Excel</span><br>
+                                                <small class="text-muted">.xlsx, .csv, or .txt with Phone, Name, and custom columns</small>
+                                            </div>
+                                            <input type="file" id="numbersFile" name="numbers_file" accept=".txt,.csv,.xlsx,.xls" hidden>
+                                        </div>
+                                    </div>
+
+                                    <!-- Contact Validation Card -->
+                                    <div id="contactPreviewSummary" class="contact-summary-card" style="display:none;">
+                                        <div class="d-flex justify-content-between align-items-center mb-2">
+                                            <strong style="font-size:0.85rem;"><i class="fas fa-list-check" style="color:var(--accent);"></i> Contact Summary</strong>
+                                            <button type="button" class="btn-close" style="font-size:0.7rem;" onclick="document.getElementById('contactPreviewSummary').style.display='none'"></button>
+                                        </div>
+                                        <div class="d-flex gap-2 flex-wrap mb-2">
+                                            <span class="contact-pill valid" id="cpValid">0 Valid</span>
+                                            <span class="contact-pill duplicate" id="cpDup">0 Duplicates</span>
+                                            <span class="contact-pill invalid" id="cpInvalid">0 Invalid</span>
+                                            <span class="contact-pill suppressed" id="cpSuppressed">0 Opted Out</span>
+                                        </div>
+                                        <div id="contactPreviewList" style="font-size:0.8rem;max-height:120px;overflow-y:auto;color:var(--text-secondary);"></div>
                                     </div>
                                 </div>
 
-                                <!-- Contact Validation Card -->
-                                <div id="contactPreviewSummary" class="contact-summary-card" style="display:none;">
+                                <!-- GROUPS MODE PANE -->
+                                <div id="recipientGroupsContainer" style="display:none;">
+                                    <div class="d-flex justify-content-between align-items-center mb-2 flex-wrap gap-2">
+                                        <div class="d-flex gap-2 align-items-center flex-grow-1" style="max-width:260px;">
+                                            <input type="text" class="form-control form-control-sm" id="groupSearchInput" placeholder="Search groups..." oninput="filterGroupsList()">
+                                        </div>
+                                        <div class="d-flex gap-1 align-items-center">
+                                            <button type="button" class="btn-outline-custom" style="padding:4px 10px;font-size:0.75rem;" onclick="selectAllGroups()"><i class="fas fa-check-double"></i> All</button>
+                                            <button type="button" class="btn-outline-custom" style="padding:4px 10px;font-size:0.75rem;" onclick="clearGroupSelection()"><i class="fas fa-times"></i> Clear</button>
+                                            <button type="button" class="btn-outline-custom" style="padding:4px 10px;font-size:0.75rem;" id="btnRefreshGroups" onclick="loadGroups(true)"><i class="fas fa-arrows-rotate"></i> Refresh</button>
+                                        </div>
+                                    </div>
                                     <div class="d-flex justify-content-between align-items-center mb-2">
-                                        <strong style="font-size:0.85rem;"><i class="fas fa-list-check" style="color:var(--accent);"></i> Contact Summary</strong>
-                                        <button type="button" class="btn-close" style="font-size:0.7rem;" onclick="document.getElementById('contactPreviewSummary').style.display='none'"></button>
+                                        <small class="text-muted" id="groupsCountBadge">0 groups available</small>
+                                        <span class="badge bg-secondary" id="selectedGroupCount">0 selected</span>
                                     </div>
-                                    <div class="d-flex gap-2 flex-wrap mb-2">
-                                        <span class="contact-pill valid" id="cpValid">0 Valid</span>
-                                        <span class="contact-pill duplicate" id="cpDup">0 Duplicates</span>
-                                        <span class="contact-pill invalid" id="cpInvalid">0 Invalid</span>
-                                        <span class="contact-pill suppressed" id="cpSuppressed">0 Opted Out</span>
+                                    <div id="groupListWrapper" class="group-list-box">
+                                        <div id="groupListLoading" class="text-center p-4" style="display:none;">
+                                            <div class="spinner-border spinner-border-sm text-success" role="status"></div>
+                                            <div class="small text-muted mt-2">Loading WhatsApp groups...</div>
+                                        </div>
+                                        <div id="groupListEmpty" class="text-center p-4 text-muted" style="display:none;">
+                                            <i class="fas fa-users-slash" style="font-size:1.8rem;color:#d1d5db;margin-bottom:8px;"></i>
+                                            <div class="small">No WhatsApp groups found for this account.</div>
+                                        </div>
+                                        <div id="groupListItems"></div>
                                     </div>
-                                    <div id="contactPreviewList" style="font-size:0.8rem;max-height:120px;overflow-y:auto;color:var(--text-secondary);"></div>
+                                    <small class="text-muted mt-2 d-block">
+                                        <i class="fas fa-shield-alt" style="color:var(--accent);"></i>
+                                        Messages are sent directly into selected groups. Member phone numbers are never exported or messaged individually.
+                                    </small>
                                 </div>
                             </div>
                         </div>
@@ -375,7 +420,7 @@
                 <div class="card-panel-header"><h3>Campaign Live Activity</h3><button type="button" class="btn-outline-custom" onclick="clearCurrentLogs()"><i class="fas fa-trash"></i> Clear</button></div>
                 <div class="card-panel-body p-0">
                     <div class="log-table-wrap">
-                        <table class="table table-hover mb-0"><thead><tr><th>#</th><th>Number</th><th>Message</th><th>Status</th><th>Delivery</th><th>Time</th></tr></thead><tbody id="sendLogsBody"></tbody></table>
+                        <table class="table table-hover mb-0"><thead><tr><th>#</th><th>Recipient / Group</th><th>Message</th><th>Status</th><th>Delivery</th><th>Time</th></tr></thead><tbody id="sendLogsBody"></tbody></table>
                     </div>
                 </div>
             </div>
@@ -447,7 +492,7 @@
                 </div>
                 <div class="card-panel-body p-0">
                     <div class="log-table-wrap" style="max-height:600px;">
-                        <table class="table table-hover mb-0"><thead><tr><th>#</th><th>Number</th><th>Message</th><th>Status</th><th>Delivery</th><th>Error</th><th>Time</th></tr></thead><tbody id="historyBody"></tbody></table>
+                        <table class="table table-hover mb-0"><thead><tr><th>#</th><th>Recipient / Group</th><th>Message</th><th>Status</th><th>Delivery</th><th>Error</th><th>Time</th></tr></thead><tbody id="historyBody"></tbody></table>
                     </div>
                 </div>
             </div>
