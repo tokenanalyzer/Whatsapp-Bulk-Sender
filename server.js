@@ -19,6 +19,7 @@ const {
     verifyMessageDelivered,
     verifyViaFetchMessages,
     confirmMessageSend,
+    ensurePageChatSafe,
 } = require('./lib/messageConfirmation');
 const { filterGroupChats, validateGroupIds } = require('./lib/groupUtils');
 
@@ -274,13 +275,16 @@ async function initWhatsApp(isReconnect = false) {
             lastError = typeof msg === 'string' ? msg : 'WhatsApp session authentication failed. Please scan QR code again.';
         });
 
-        waClient.on('ready', () => {
+        waClient.on('ready', async () => {
             console.log('[WA] Client is ready to send messages!');
             waReady = true;
             waState = 'connected';
             qrCodeData = null;
             lastError = null;
             reconnectAttempts = 0;
+            try {
+                await ensurePageChatSafe(waClient);
+            } catch (e) {}
         });
 
         waClient.on('disconnected', (reason) => {
@@ -428,13 +432,28 @@ async function waitForWhatsAppComms(timeoutMs = 15000) {
     return waReady;
 }
 
+function extractMessageId(msg) {
+    if (!msg) return null;
+    try {
+        if (typeof msg === 'string') return msg;
+        if (msg.id) {
+            if (typeof msg.id === 'string') return msg.id;
+            if (typeof msg.id._serialized === 'string') return msg.id._serialized;
+            if (typeof msg.id.id === 'string') return msg.id.id;
+        }
+        if (typeof msg._serialized === 'string') return msg._serialized;
+    } catch (e) {}
+    return null;
+}
+
 async function canSendToRecipient(chatId) {
     try {
         const isRegistered = await waClient.isRegisteredUser(chatId);
         return { ok: isRegistered, error: isRegistered ? '' : 'Number not registered on WhatsApp' };
     } catch (err) {
-        if (isCommsNotReadyError(err)) {
-            console.log(`[WA] Registration check not ready for ${chatId}; trying direct send.`);
+        const msg = String(err && err.message ? err.message : err);
+        if (isCommsNotReadyError(err) || msg.includes("it's how we memoize") || msg.includes('include an id property')) {
+            console.log(`[WA] Registration check fallback for ${chatId}; trying direct send.`);
             return { ok: true, error: '' };
         }
         throw err;
@@ -445,6 +464,8 @@ async function sendWhatsAppMessage(chatId, text, media) {
     if (!waClient || !waReady) {
         throw new Error('WhatsApp connection lost. Please reconnect.');
     }
+
+    await ensurePageChatSafe(waClient);
 
     const sentAtSec = Math.floor(Date.now() / 1000);
     const sendOptions = media
@@ -527,7 +548,7 @@ async function sendBulkMessages(contacts, messageTemplate, mediaPath, options) {
 
                 log.status = 'sent';
                 log.deliveryStatus = 'sent';
-                log.messageId = sentMsg && sentMsg.id ? sentMsg.id._serialized : null;
+                log.messageId = extractMessageId(sentMsg);
                 sendingStatus.sent++;
             } catch (err) {
                 log.status = 'failed';
@@ -672,7 +693,7 @@ async function sendBulkGroupMessages(groups, messageTemplate, mediaPath, options
 
                 log.status = 'sent';
                 log.deliveryStatus = 'sent';
-                log.messageId = sentMsg && sentMsg.id ? (sentMsg.id._serialized || sentMsg.id.id || sentMsg.id) : null;
+                log.messageId = extractMessageId(sentMsg);
                 sendingStatus.sent++;
             } catch (err) {
                 log.status = 'failed';

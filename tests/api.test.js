@@ -18,6 +18,7 @@ process.env.BULKSENDER_DESKTOP = 'true';
 process.env.BULKSENDER_NO_AUTOCONNECT = 'true';
 process.env.NODE_ENV = 'test';
 process.env.BULKSENDER_DATA_DIR = testDataDir;
+process.env.PORT = process.env.TEST_PORT || '5099';
 
 const app = require('../server');
 

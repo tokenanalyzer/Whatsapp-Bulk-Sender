@@ -451,3 +451,203 @@ test('confirmMessageSend throws and does not retry when group message send fails
     assert.equal(sendCallCount, 1, 'Must never blindly retry on failure');
     assert.equal(mockClient.listenerCount('message_create'), 0, 'Listener must be cleaned up on error');
 });
+
+test('confirmMessageSend handles single direct-number send success with Message object', async () => {
+    const EventEmitter = require('events');
+    const mockClient = new EventEmitter();
+
+    const targetChatId = '919876543210@c.us';
+    const messageText = 'Hello Direct Single Send';
+    const sentAtSec = Math.floor(Date.now() / 1000);
+
+    const mockSentMsg = {
+        id: { _serialized: 'true_919876543210@c.us_MSG001', id: 'MSG001' },
+        fromMe: true,
+        to: targetChatId,
+        body: messageText,
+        timestamp: sentAtSec,
+    };
+
+    let sendCallCount = 0;
+    const sendMessageFn = async () => {
+        sendCallCount++;
+        return mockSentMsg;
+    };
+
+    const result = await confirmMessageSend({
+        waClient: mockClient,
+        chatId: targetChatId,
+        text: messageText,
+        media: null,
+        sentAtSec,
+        sendMessageFn,
+    });
+
+    assert.ok(result !== null);
+    assert.equal(result.id._serialized, 'true_919876543210@c.us_MSG001');
+    assert.equal(sendCallCount, 1, 'Should send exactly once');
+    assert.equal(mockClient.listenerCount('message_create'), 0);
+});
+
+test('confirmMessageSend safely ignores unsafe getters on partial or undefined sendMessage result', async () => {
+    const EventEmitter = require('events');
+    const mockClient = new EventEmitter();
+
+    const targetChatId = '919876543210@c.us';
+    const messageText = 'Safe from getter memoize crash';
+    const sentAtSec = Math.floor(Date.now() / 1000);
+
+    // Simulated partial object whose id getter throws the exact memoize error
+    const brokenPartial = {
+        get id() {
+            throw new Error("Data passed to getter must include an id property (it's how we memoize) but got undefined");
+        }
+    };
+
+    const mockDeliveredMsg = {
+        id: { _serialized: 'true_919876543210@c.us_DELIVERED789', remote: targetChatId },
+        fromMe: true,
+        to: targetChatId,
+        body: messageText,
+        timestamp: sentAtSec,
+    };
+
+    let sendCallCount = 0;
+    const sendMessageFn = async () => {
+        sendCallCount++;
+        // Emit message_create while brokenPartial is returned
+        mockClient.emit('message_create', mockDeliveredMsg);
+        return brokenPartial;
+    };
+
+    // Should NOT crash with getter memoize error; should fall back to message_create confirmation!
+    const result = await confirmMessageSend({
+        waClient: mockClient,
+        chatId: targetChatId,
+        text: messageText,
+        media: null,
+        sentAtSec,
+        sendMessageFn,
+        messageCreateTimeoutMs: 100,
+    });
+
+    assert.ok(result !== null);
+    assert.equal(result.id._serialized, 'true_919876543210@c.us_DELIVERED789');
+    assert.equal(sendCallCount, 1, 'Never retry on broken getter partial');
+    assert.equal(mockClient.listenerCount('message_create'), 0);
+});
+
+test('confirmMessageSend throws cleanly on failed send and never retries', async () => {
+    const EventEmitter = require('events');
+    const mockClient = new EventEmitter();
+
+    const targetChatId = '919876543210@c.us';
+    const messageText = 'Failing direct number send';
+    const sentAtSec = Math.floor(Date.now() / 1000);
+
+    let sendCallCount = 0;
+    const sendMessageFn = async () => {
+        sendCallCount++;
+        throw new Error('Network error: socket closed');
+    };
+
+    await assert.rejects(
+        async () => {
+            await confirmMessageSend({
+                waClient: mockClient,
+                chatId: targetChatId,
+                text: messageText,
+                media: null,
+                sentAtSec,
+                sendMessageFn,
+                verifyLastMessageFn: async () => null,
+                verifyFetchMessagesFn: async () => null,
+                messageCreateTimeoutMs: 50,
+            });
+        },
+        /socket closed/
+    );
+
+    assert.equal(sendCallCount, 1, 'Must never duplicate retry on failed send');
+    assert.equal(mockClient.listenerCount('message_create'), 0);
+});
+
+test('STOP/opt-out recipient is skipped from contacts queue', () => {
+    const tempOptDir = path.join(__dirname, '..', '.test_opt_out');
+    if (!fs.existsSync(tempOptDir)) fs.mkdirSync(tempOptDir, { recursive: true });
+
+    try {
+        const optService = new OptOutService(tempOptDir);
+        optService.addOptOut('919999000001', 'User replied STOP');
+
+        const testContacts = [
+            { number: '919999000001', name: 'Opted Out User' },
+            { number: '919999000002', name: 'Active User' },
+            { number: '919999000003', name: 'Another User' },
+        ];
+
+        const { allowed, suppressed } = optService.filterSuppressed(testContacts);
+
+        assert.equal(allowed.length, 2);
+        assert.equal(suppressed.length, 1);
+        assert.equal(suppressed[0].number, '919999000001');
+        assert.equal(allowed[0].number, '919999000002');
+        assert.equal(allowed[1].number, '919999000003');
+    } finally {
+        try { fs.rmSync(tempOptDir, { recursive: true, force: true }); } catch (e) {}
+    }
+});
+
+test('parseContacts handles 2000 rows with duplicates, invalid numbers, and custom variables', () => {
+    const xlsx = require('xlsx');
+
+    // Generate 2000 mock rows (with 200 duplicates, 50 invalid)
+    const rows = [];
+    for (let i = 1; i <= 1750; i++) {
+        rows.push({
+            'Phone Number': `+91987000${String(i).padStart(4, '0')}`,
+            'Full Name': `Customer ${i}`,
+            'City': `City ${i % 10}`,
+            'Amount': i * 100,
+        });
+    }
+    // 200 duplicates
+    for (let i = 1; i <= 200; i++) {
+        rows.push({
+            'Phone Number': `+91987000${String(i).padStart(4, '0')}`,
+            'Full Name': `Duplicate ${i}`,
+            'City': `City ${i % 10}`,
+            'Amount': i * 100,
+        });
+    }
+    // 50 invalid numbers
+    for (let i = 1; i <= 50; i++) {
+        rows.push({
+            'Phone Number': `123${i}`, // too short
+            'Full Name': `Invalid ${i}`,
+            'City': 'Unknown',
+            'Amount': 0,
+        });
+    }
+
+    const ws = xlsx.utils.json_to_sheet(rows);
+    const wb = xlsx.utils.book_new();
+    xlsx.utils.book_append_sheet(wb, ws, 'Contacts');
+    const buf = xlsx.write(wb, { type: 'buffer', bookType: 'xlsx' });
+
+    const parsed = parseContacts(buf, '.xlsx', { defaultCountryCode: '91' });
+
+    assert.equal(parsed.totalRows, 2000);
+    assert.equal(parsed.contacts.length, 1750, 'All unique valid numbers extracted');
+    assert.equal(parsed.duplicates.length, 200, 'All 200 duplicate rows identified');
+    assert.equal(parsed.invalid.length, 50, 'All 50 invalid rows identified');
+
+    // Verify custom variables
+    assert.equal(parsed.contacts[0].variables.name, 'Customer 1');
+    assert.equal(parsed.contacts[0].variables.city, 'City 1');
+    assert.equal(parsed.contacts[0].variables.amount, '100');
+
+    // Verify template rendering on variables
+    const rendered = processTemplateVars('Hello {{Full Name}}, your amount is {{Amount}}', parsed.contacts[0].variables);
+    assert.equal(rendered, 'Hello Customer 1, your amount is 100');
+});
